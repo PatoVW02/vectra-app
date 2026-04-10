@@ -643,7 +643,7 @@ Your recommendation MUST be consistent with your explanation. Do not say deletin
   ipcMain.handle('test-notification', () => testNotification())
 
   ipcMain.handle('check-for-updates', () => {
-    return runAutoUpdateCheck('settings-enabled')
+    return runAutoUpdateCheck('manual')
   })
 
   ipcMain.handle('request-notification-permission', () => {

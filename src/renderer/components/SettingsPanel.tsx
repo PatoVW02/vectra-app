@@ -214,6 +214,8 @@ export function SettingsPanel({ onClose, onDevDepsChange, quickScanFolders, onQu
       if (!updateFound) {
         setUpdateMessage('No update available')
         setTimeout(() => setUpdateMessage(null), 3000)
+      } else {
+        setUpdateMessage('Update found. Downloading now, app will restart to install.')
       }
     } catch (err) {
       console.error('Failed to check for updates:', err)

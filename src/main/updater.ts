@@ -11,6 +11,7 @@ const DEFAULT_LANDING_URLS = [
 
 let listenersRegistered = false
 let checkInFlight = false
+let installAfterManualDownload = false
 
 function resolveLandingUrls(): string[] {
   const env = process.env['VECTRA_LANDING_PAGE_URLS'] ?? process.env['VECTRA_LANDING_PAGE_URL']
@@ -73,6 +74,7 @@ function ensureUpdaterListeners(): void {
   if (listenersRegistered) return
 
   autoUpdater.on('error', (err) => {
+    installAfterManualDownload = false
     console.error('[Vectra] Auto-updater error:', err)
   })
 
@@ -80,19 +82,34 @@ function ensureUpdaterListeners(): void {
     console.log(`[Vectra] Update available: ${info.version}`)
   })
 
+  autoUpdater.on('update-not-available', (info) => {
+    installAfterManualDownload = false
+    console.log(`[Vectra] No update available (provider): ${info.version}`)
+  })
+
   autoUpdater.on('update-downloaded', (info) => {
+    if (installAfterManualDownload) {
+      installAfterManualDownload = false
+      console.log(`[Vectra] Update downloaded: ${info.version}. Installing now.`)
+      // Let logs flush and event loop settle before restart/install.
+      setTimeout(() => {
+        autoUpdater.quitAndInstall(false, true)
+      }, 500)
+      return
+    }
+
     console.log(`[Vectra] Update downloaded: ${info.version}. Will install on app quit.`)
   })
 
   listenersRegistered = true
 }
 
-export async function runAutoUpdateCheck(reason: 'startup' | 'settings-enabled' | 'scheduled' = 'startup'): Promise<boolean> {
+export async function runAutoUpdateCheck(reason: 'startup' | 'settings-enabled' | 'scheduled' | 'manual' = 'startup'): Promise<boolean> {
   if (!app.isPackaged) return false
   if (process.platform !== 'darwin') return false
 
   const settings = loadSettings()
-  if (!settings.autoUpdateEnabled) return false
+  if (reason !== 'manual' && !settings.autoUpdateEnabled) return false
   if (checkInFlight) return false
 
   checkInFlight = true
@@ -113,11 +130,13 @@ export async function runAutoUpdateCheck(reason: 'startup' | 'settings-enabled' 
 
     autoUpdater.autoDownload = true
     autoUpdater.autoInstallOnAppQuit = true
+    installAfterManualDownload = reason === 'manual'
 
     console.log(`[Vectra] Auto-update check (${reason}): ${currentVersion} -> ${latestLandingVersion}. Checking provider feed.`)
     await autoUpdater.checkForUpdates()
     return true
   } catch (err) {
+    installAfterManualDownload = false
     console.error('[Vectra] Auto-update check failed:', err)
     return false
   } finally {
