@@ -3,7 +3,7 @@ import { autoUpdater } from 'electron-updater'
 import { loadSettings } from './settings'
 
 const DEFAULT_LANDING_URLS = [
-    'https://vectra-mu.vercel.app.com', 
+    'https://vectra-mu.vercel.app', 
     // 'https://vectrapp.com', 
     // 'https://vectra-app.com',
     // 'https://vectraapp.com'
