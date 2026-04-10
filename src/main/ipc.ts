@@ -8,6 +8,7 @@ import { scanDirectoryStreaming } from './scanner'
 import { loadSettings, saveSettings, patchSettings, VectraSettings } from './settings'
 import { rebuildTrayMenu, scheduleBackgroundScan, stopBackgroundScan, runBackgroundScan, updateLastScanPath, setTrayVisibility, testNotification } from './background'
 import { getLicenseInfo, activateLicense, revalidateLicense, deactivateLicense } from './license'
+import { runAutoUpdateCheck } from './updater'
 
 const execFileAsync = promisify(execFile)
 
@@ -16,6 +17,13 @@ let cancelCurrentScan: (() => void) | null = null
 // Ollama state — tracked per active request
 let ollamaAbort: AbortController | null = null
 let ollamaUserCancelled = false
+const FREE_DELETE_LIMIT_PER_MONTH = 15
+
+function currentMonthKey(): string {
+  const now = new Date()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  return `${now.getFullYear()}-${month}`
+}
 
 function formatSizeForPrompt(sizeKB: number): string {
   if (sizeKB > 1024 * 1024) return `${(sizeKB / 1024 / 1024).toFixed(1)} GB`
@@ -418,10 +426,46 @@ export function registerIpcHandlers(): void {
   })
 
   ipcMain.handle('trash-entries', async (_event, paths: string[]) => {
-    const errors: string[] = []
-    for (const p of paths) {
-      try { await shell.trashItem(p) } catch (err) { errors.push(String(err)) }
+    const requested = Math.max(0, paths.length)
+    const premium = getLicenseInfo().active
+
+    if (!premium) {
+      const settingsAtStart = loadSettings()
+      const monthKey = currentMonthKey()
+      const usedAtStart = settingsAtStart.deleteQuota.monthKey === monthKey ? settingsAtStart.deleteQuota.used : 0
+      const remaining = Math.max(0, FREE_DELETE_LIMIT_PER_MONTH - usedAtStart)
+
+      if (remaining <= 0) {
+        return `You've reached your free delete limit (${FREE_DELETE_LIMIT_PER_MONTH} per month). Upgrade to Premium for unlimited in-app deletes.`
+      }
+      if (requested > remaining) {
+        return `You can delete ${remaining} more ${remaining === 1 ? 'item' : 'items'} this month on Free. Remove fewer items or upgrade to Premium for unlimited deletes.`
+      }
     }
+
+    const errors: string[] = []
+    let deletedCount = 0
+    for (const p of paths) {
+      try {
+        await shell.trashItem(p)
+        deletedCount += 1
+      } catch (err) {
+        errors.push(String(err))
+      }
+    }
+
+    if (!premium && deletedCount > 0) {
+      const settings = loadSettings()
+      const monthKey = currentMonthKey()
+      const used = settings.deleteQuota.monthKey === monthKey ? settings.deleteQuota.used : 0
+      patchSettings({
+        deleteQuota: {
+          monthKey,
+          used: Math.min(FREE_DELETE_LIMIT_PER_MONTH, used + deletedCount),
+        }
+      })
+    }
+
     return errors.length === 0 ? null : errors.join('\n')
   })
 
@@ -570,7 +614,17 @@ Your recommendation MUST be consistent with your explanation. Do not say deletin
 
   ipcMain.handle('save-settings', (_event, settings: VectraSettings) => {
     const prev = loadSettings()
-    saveSettings(settings)
+    // Keep runtime-managed counters from the source of truth in main process,
+    // so stale renderer state can't overwrite delete quota or scan history.
+    const mergedSettings: VectraSettings = {
+      ...settings,
+      lastManualScanTime: prev.lastManualScanTime,
+      lastManualScanFoundKB: prev.lastManualScanFoundKB,
+      lastCleanedTime: prev.lastCleanedTime,
+      lastCleanedKB: prev.lastCleanedKB,
+      deleteQuota: prev.deleteQuota,
+    }
+    saveSettings(mergedSettings)
     if (settings.backgroundScan.enabled !== prev.backgroundScan.enabled ||
         settings.backgroundScan.intervalHours !== prev.backgroundScan.intervalHours) {
       if (settings.backgroundScan.enabled) scheduleBackgroundScan()
@@ -578,6 +632,9 @@ Your recommendation MUST be consistent with your explanation. Do not say deletin
     }
     if (settings.showMenuBarIcon !== prev.showMenuBarIcon) {
       setTrayVisibility(settings.showMenuBarIcon)
+    }
+    if (settings.autoUpdateEnabled && !prev.autoUpdateEnabled) {
+      runAutoUpdateCheck('settings-enabled').catch(() => {})
     }
     rebuildTrayMenu()
   })

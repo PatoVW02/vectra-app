@@ -5,6 +5,7 @@ const LIFETIME_CHECKOUT_URL = import.meta.env.VITE_LIFETIME_CHECKOUT_URL as stri
 
 const FEATURES = [
   { icon: '✦', label: 'Smart Clean', desc: 'AI-curated list of safe-to-delete caches, logs & leftovers' },
+  { icon: '🗑', label: 'Unlimited deletes from app', desc: 'No monthly cap when cleaning directly inside Vectra' },
   { icon: '⚡', label: 'Background scans', desc: 'Scheduled recurring scans with tray notifications' },
   { icon: '🤖', label: 'AI analysis', desc: 'Per-item explanations and delete recommendations via Ollama' },
   { icon: '⚙', label: 'Custom Quick Scan folders', desc: 'Add any folder to your Quick Scan preset' },

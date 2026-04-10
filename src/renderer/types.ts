@@ -39,6 +39,7 @@ export interface OllamaModel {
 export interface VectraSettings {
   backgroundScan: BackgroundScanSettings
   showMenuBarIcon: boolean
+  autoUpdateEnabled: boolean
   preferredOllamaModel: string | null
   onboardingComplete: boolean
   showDevDependencies: boolean
@@ -46,6 +47,14 @@ export interface VectraSettings {
   quickScanFolders: string[]
   /** Absolute paths the user has added via the folder picker. */
   customQuickScanFolders: string[]
+  lastManualScanTime: number | null
+  lastManualScanFoundKB: number
+  lastCleanedTime: number | null
+  lastCleanedKB: number
+  deleteQuota: {
+    monthKey: string
+    used: number
+  }
 }
 
 export interface LicenseInfo {

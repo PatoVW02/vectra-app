@@ -300,12 +300,15 @@ const ReviewTreeItem = memo(function ReviewTreeItem({
 
 interface ReviewPanelProps {
   entries: DiskEntry[]
-  onConfirm: (paths: string[], totalKB: number) => Promise<void>
+  isPremium: boolean
+  remainingQuota: number
+  onConfirm: (paths: string[], totalKB: number) => Promise<string | null>
   onCancel: () => void
   onDone: () => void
+  onUpgradeClick: () => void
 }
 
-export function ReviewPanel({ entries, onConfirm, onCancel, onDone }: ReviewPanelProps) {
+export function ReviewPanel({ entries, isPremium, remainingQuota, onConfirm, onCancel, onDone, onUpgradeClick }: ReviewPanelProps) {
   const [selected, setSelected] = useState<Set<string>>(
     () => new Set(entries.filter(e => !isCriticalPath(e.path)).map(e => e.path)),
   )
@@ -315,6 +318,7 @@ export function ReviewPanel({ entries, onConfirm, onCancel, onDone }: ReviewPane
   const [mounted, setMounted] = useState(false)
   const [homeDir, setHomeDir] = useState('')
   const [expandKey, setExpandKey] = useState({ seq: 0, expanded: true })
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => { requestAnimationFrame(() => setMounted(true)) }, [])
   useEffect(() => { window.electronAPI.getHomeDir().then(setHomeDir) }, [])
@@ -353,27 +357,52 @@ export function ReviewPanel({ entries, onConfirm, onCancel, onDone }: ReviewPane
 
   const selectedEntries = entries.filter(e => selected.has(e.path))
   const totalSelectedKB = selectedEntries.reduce((s, e) => s + e.sizeKB, 0)
+  const exceedsRemainingQuota = !isPremium && selectedEntries.length > remainingQuota
+  const freeTierOverLimitMessage = exceedsRemainingQuota
+    ? `You have ${remainingQuota} ${remainingQuota === 1 ? 'delete' : 'deletes'} remaining this month. Deselect ${selectedEntries.length - remainingQuota} item${selectedEntries.length - remainingQuota === 1 ? '' : 's'} to continue, or upgrade for unlimited deletes.`
+    : null
 
   const handleConfirm = useCallback(async () => {
     if (phase !== 'review' || selectedEntries.length === 0) return
+    
+    // If free-tier user is over limit, open upgrade modal instead
+    if (freeTierOverLimitMessage) {
+      onUpgradeClick()
+      return
+    }
+    
     const toDelete = [...selectedEntries]
+    setError(null)
     setFreedKB(toDelete.reduce((s, e) => s + e.sizeKB, 0))
     setPhase('deleting')
 
     // Stagger items out: cap total animation at 700 ms
     const stagger = Math.min(55, 700 / Math.max(toDelete.length, 1))
+    const animationTimers: number[] = []
     toDelete.forEach((entry, i) => {
-      setTimeout(() => {
+      const timer = window.setTimeout(() => {
         setRemovingPaths(prev => new Set([...prev, entry.path]))
       }, i * stagger)
+      animationTimers.push(timer)
     })
 
     // Run deletion in parallel with animation
-    await onConfirm(toDelete.map(e => e.path), toDelete.reduce((s, e) => s + e.sizeKB, 0))
+    const confirmError = await onConfirm(
+      toDelete.map(e => e.path),
+      toDelete.reduce((s, e) => s + e.sizeKB, 0),
+    )
+
+    if (confirmError) {
+      animationTimers.forEach((timer) => window.clearTimeout(timer))
+      setRemovingPaths(new Set())
+      setPhase('review')
+      setError(confirmError)
+      return
+    }
 
     // Show done state after last animation finishes
     setTimeout(() => setPhase('done'), toDelete.length * stagger + 380)
-  }, [phase, selectedEntries, onConfirm])
+  }, [phase, selectedEntries, freeTierOverLimitMessage, onConfirm, onUpgradeClick])
 
   return createPortal(
     <div
@@ -498,23 +527,35 @@ export function ReviewPanel({ entries, onConfirm, onCancel, onDone }: ReviewPane
             >
               Cancel
             </button>
-            <button
-              onClick={handleConfirm}
-              disabled={selectedEntries.length === 0 || phase === 'deleting'}
-              className="flex-1 py-2 rounded-lg bg-red-600/80 hover:bg-red-600 disabled:opacity-30 disabled:cursor-not-allowed text-xs text-white font-medium transition-colors flex items-center justify-center gap-2"
-            >
-              {phase === 'deleting' ? (
-                <>
-                  <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                  </svg>
-                  Moving to Trash…
-                </>
-              ) : (
-                `Move ${selectedEntries.length} ${selectedEntries.length === 1 ? 'item' : 'items'} to Trash · ${formatSize(totalSelectedKB)}`
+            <div className="flex-1 flex flex-col items-end gap-2">
+              {freeTierOverLimitMessage && (
+                <p className="w-full text-right text-[11px] text-amber-400 leading-relaxed">
+                  {freeTierOverLimitMessage}
+                </p>
               )}
-            </button>
+              {error && (
+                <p className="w-full text-right text-[11px] text-amber-400 leading-relaxed">
+                  {error}
+                </p>
+              )}
+              <button
+                onClick={handleConfirm}
+                disabled={selectedEntries.length === 0 || phase === 'deleting'}
+                className="w-full py-2 rounded-lg bg-red-600/80 hover:bg-red-600 disabled:opacity-30 disabled:cursor-not-allowed text-xs text-white font-medium transition-colors flex items-center justify-center gap-2"
+              >
+                {phase === 'deleting' ? (
+                  <>
+                    <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    Moving to Trash…
+                  </>
+                ) : (
+                  `Move ${selectedEntries.length} ${selectedEntries.length === 1 ? 'item' : 'items'} to Trash · ${formatSize(totalSelectedKB)}`
+                )}
+              </button>
+            </div>
           </div>
         </>
       )}

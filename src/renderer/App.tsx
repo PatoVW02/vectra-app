@@ -54,6 +54,7 @@ const DEFAULT_PANEL_WIDTH = 400
 const DEFAULT_SPLIT = 0.5
 const MIN_SPLIT = 0.2
 const MAX_SPLIT = 0.8
+const FREE_DELETE_LIMIT_PER_MONTH = 15
 
 export function App() {
   const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null)
@@ -76,6 +77,7 @@ function AppShell() {
   const [showDevDeps, setShowDevDeps] = useState(false)
   const [quickScanFolders, setQuickScanFolders] = useState<string[]>(['Caches', 'Logs', 'Developer', 'Containers'])
   const [homeDir, setHomeDir] = useState<string | null>(null)
+  const [deleteQuotaUsed, setDeleteQuotaUsed] = useState(0)
 
   // Derived from homeDir — the ~/Library path used as quick scan root
   const QUICK_SCAN_PATH = homeDir ? `${homeDir}/Library` : null
@@ -89,6 +91,7 @@ function AppShell() {
     ]).then(([s, home]) => {
       setShowDevDeps(s.showDevDependencies ?? false)
       setQuickScanFolders(s.quickScanFolders ?? ['Caches', 'Logs', 'Developer', 'Containers'])
+      setDeleteQuotaUsed(s.deleteQuota?.used ?? 0)
       setHomeDir(home)
     })
   }, [])
@@ -409,16 +412,22 @@ function AppShell() {
     })
   }, [])
 
+  const handleOpenDeleteReview = useCallback(() => {
+    setReviewOpen(true)
+  }, [])
+
   // ── Trash ─────────────────────────────────────────────────────────────────
 
   /** Called by ReviewPanel after the user confirms. Trashes only the paths they kept selected. */
   const handleConfirmTrash = useCallback(async (paths: string[], totalKB: number) => {
-    if (paths.length === 0) return
+    if (paths.length === 0) return null
+
     const err = await window.electronAPI.trashEntries(paths)
     if (!err) {
       removeEntries(paths)
       window.electronAPI.notifyCleaned(totalKB)
     }
+    return err
   }, [removeEntries])
 
   // Cmd+, opens settings
@@ -629,19 +638,25 @@ function AppShell() {
         <SelectionBar
           selectedEntries={selectedEntries}
           onDeselect={() => setSelectedPaths(new Map())}
-          onContinue={() => setReviewOpen(true)}
+          onContinue={handleOpenDeleteReview}
         />
       )}
 
       {reviewOpen && (
         <ReviewPanel
           entries={selectedEntries}
+          isPremium={isPremium}
+          remainingQuota={FREE_DELETE_LIMIT_PER_MONTH - deleteQuotaUsed}
           onConfirm={handleConfirmTrash}
           onCancel={() => setReviewOpen(false)}
           onDone={() => {
             setReviewOpen(false)
             setSmartCleanOpen(false)
             setSelectedPaths(new Map())
+          }}
+          onUpgradeClick={() => {
+            setReviewOpen(false)
+            setUpgradeOpen(true)
           }}
         />
       )}

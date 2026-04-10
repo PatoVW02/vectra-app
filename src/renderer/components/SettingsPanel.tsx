@@ -193,6 +193,13 @@ export function SettingsPanel({ onClose, onDevDepsChange, quickScanFolders, onQu
     await window.electronAPI.saveSettings(next)
   }
 
+  async function toggleAutoUpdate() {
+    if (!settings) return
+    const next = { ...settings, autoUpdateEnabled: !settings.autoUpdateEnabled }
+    setSettings(next)
+    await window.electronAPI.saveSettings(next)
+  }
+
   async function setBgInterval(hours: number) {
     if (!settings) return
     const next = { ...settings, backgroundScan: { ...settings.backgroundScan, intervalHours: hours } }
@@ -718,6 +725,24 @@ export function SettingsPanel({ onClose, onDevDepsChange, quickScanFolders, onQu
                 </p>
               </div>
               <Toggle on={!!loginItem} onClick={toggleLoginItem} disabled={loginItem === null} />
+            </div>
+          </div>
+        </section>
+
+        {/* ── Updates ── */}
+        <section>
+          <h2 className="text-[10px] font-semibold text-zinc-600 uppercase tracking-widest mb-3">
+            Updates
+          </h2>
+          <div className="rounded-xl bg-white/[0.03] border border-white/[0.06]">
+            <div className="flex items-start justify-between gap-4 px-4 py-4">
+              <div className="min-w-0">
+                <p className="text-sm text-zinc-200 font-medium">Auto update</p>
+                <p className="text-xs text-zinc-500 mt-1 leading-relaxed">
+                  Automatically checks the latest release listed on the landing page and downloads updates when a newer version is available.
+                </p>
+              </div>
+              <Toggle on={!!settings?.autoUpdateEnabled} onClick={toggleAutoUpdate} disabled={!settings} />
             </div>
           </div>
         </section>

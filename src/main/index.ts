@@ -4,6 +4,7 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { registerIpcHandlers } from './ipc'
 import { initTray, scheduleBackgroundScan, isQuitting } from './background'
 import { loadSettings } from './settings'
+import { runAutoUpdateCheck, scheduleAutoUpdateChecks } from './updater'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -60,6 +61,9 @@ app.whenReady().then(() => {
   if (loadSettings().backgroundScan.enabled) {
     scheduleBackgroundScan()
   }
+
+  runAutoUpdateCheck('startup').catch(() => {})
+  scheduleAutoUpdateChecks()
 
   app.on('activate', () => {
     if (mainWindow) { mainWindow.show(); mainWindow.focus() }

@@ -14,6 +14,7 @@ export interface BackgroundScanSettings {
 export interface VectraSettings {
   backgroundScan: BackgroundScanSettings
   showMenuBarIcon: boolean
+  autoUpdateEnabled: boolean
   preferredOllamaModel: string | null
   onboardingComplete: boolean
   showDevDependencies: boolean
@@ -25,6 +26,16 @@ export interface VectraSettings {
   lastManualScanFoundKB: number
   lastCleanedTime: number | null
   lastCleanedKB: number
+  deleteQuota: {
+    monthKey: string
+    used: number
+  }
+}
+
+function currentMonthKey(): string {
+  const now = new Date()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  return `${now.getFullYear()}-${month}`
 }
 
 const DEFAULTS: VectraSettings = {
@@ -37,6 +48,7 @@ const DEFAULTS: VectraSettings = {
     lastScanResults: []
   },
   showMenuBarIcon: true,
+  autoUpdateEnabled: true,
   preferredOllamaModel: null,
   onboardingComplete: false,
   showDevDependencies: false,
@@ -45,7 +57,11 @@ const DEFAULTS: VectraSettings = {
   lastManualScanTime: null,
   lastManualScanFoundKB: 0,
   lastCleanedTime: null,
-  lastCleanedKB: 0
+  lastCleanedKB: 0,
+  deleteQuota: {
+    monthKey: currentMonthKey(),
+    used: 0,
+  }
 }
 
 function settingsPath(): string {
@@ -56,13 +72,36 @@ export function loadSettings(): VectraSettings {
   try {
     const raw = readFileSync(settingsPath(), 'utf-8')
     const parsed = JSON.parse(raw) as Partial<VectraSettings>
-    return {
+    const hasValidDeleteQuota =
+      !!parsed.deleteQuota &&
+      typeof parsed.deleteQuota.monthKey === 'string' &&
+      Number.isFinite(parsed.deleteQuota.used)
+
+    const merged: VectraSettings = {
       ...DEFAULTS,
       ...parsed,
-      backgroundScan: { ...DEFAULTS.backgroundScan, ...parsed.backgroundScan }
+      backgroundScan: { ...DEFAULTS.backgroundScan, ...parsed.backgroundScan },
+      deleteQuota: { ...DEFAULTS.deleteQuota, ...parsed.deleteQuota },
     }
+
+    // Auto-reset quota when the month changes.
+    const monthKey = currentMonthKey()
+    const shouldNormalize = !hasValidDeleteQuota
+    if (merged.deleteQuota.monthKey !== monthKey) {
+      merged.deleteQuota = { monthKey, used: 0 }
+      saveSettings(merged)
+    } else if (shouldNormalize) {
+      // Backfill missing schema keys on disk so subsequent reads/writes are stable.
+      saveSettings(merged)
+    }
+
+    return merged
   } catch {
-    return { ...DEFAULTS, backgroundScan: { ...DEFAULTS.backgroundScan } }
+    return {
+      ...DEFAULTS,
+      backgroundScan: { ...DEFAULTS.backgroundScan },
+      deleteQuota: { ...DEFAULTS.deleteQuota },
+    }
   }
 }
 
@@ -78,7 +117,8 @@ export function patchSettings(patch: Partial<VectraSettings>): VectraSettings {
   const next: VectraSettings = {
     ...current,
     ...patch,
-    backgroundScan: { ...current.backgroundScan, ...(patch.backgroundScan ?? {}) }
+    backgroundScan: { ...current.backgroundScan, ...(patch.backgroundScan ?? {}) },
+    deleteQuota: { ...current.deleteQuota, ...(patch.deleteQuota ?? {}) },
   }
   saveSettings(next)
   return next
