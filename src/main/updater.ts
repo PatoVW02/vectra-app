@@ -1,4 +1,4 @@
-import { app, net } from 'electron'
+import { app, net, BrowserWindow } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { loadSettings } from './settings'
 
@@ -11,7 +11,23 @@ const DEFAULT_LANDING_URLS = [
 
 let listenersRegistered = false
 let checkInFlight = false
-let installAfterManualDownload = false
+let downloadedUpdateReady = false
+
+export type UpdaterStatusEvent =
+  | { type: 'checking' }
+  | { type: 'update-available'; version: string }
+  | { type: 'update-not-available'; version: string }
+  | { type: 'download-progress'; percent: number; transferred: number; total: number; bytesPerSecond: number }
+  | { type: 'update-downloaded'; version: string }
+  | { type: 'error'; message: string }
+
+function broadcastUpdaterStatus(event: UpdaterStatusEvent): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) {
+      win.webContents.send('updater-status', event)
+    }
+  }
+}
 
 function resolveLandingUrls(): string[] {
   const env = process.env['VECTRA_LANDING_PAGE_URLS'] ?? process.env['VECTRA_LANDING_PAGE_URL']
@@ -74,30 +90,36 @@ function ensureUpdaterListeners(): void {
   if (listenersRegistered) return
 
   autoUpdater.on('error', (err) => {
-    installAfterManualDownload = false
+    downloadedUpdateReady = false
+    const message = err instanceof Error ? err.message : String(err)
+    broadcastUpdaterStatus({ type: 'error', message })
     console.error('[Vectra] Auto-updater error:', err)
   })
 
   autoUpdater.on('update-available', (info) => {
+    broadcastUpdaterStatus({ type: 'update-available', version: info.version })
     console.log(`[Vectra] Update available: ${info.version}`)
   })
 
   autoUpdater.on('update-not-available', (info) => {
-    installAfterManualDownload = false
+    downloadedUpdateReady = false
+    broadcastUpdaterStatus({ type: 'update-not-available', version: info.version })
     console.log(`[Vectra] No update available (provider): ${info.version}`)
   })
 
-  autoUpdater.on('update-downloaded', (info) => {
-    if (installAfterManualDownload) {
-      installAfterManualDownload = false
-      console.log(`[Vectra] Update downloaded: ${info.version}. Installing now.`)
-      // Let logs flush and event loop settle before restart/install.
-      setTimeout(() => {
-        autoUpdater.quitAndInstall(false, true)
-      }, 500)
-      return
-    }
+  autoUpdater.on('download-progress', (progress) => {
+    broadcastUpdaterStatus({
+      type: 'download-progress',
+      percent: progress.percent,
+      transferred: progress.transferred,
+      total: progress.total,
+      bytesPerSecond: progress.bytesPerSecond,
+    })
+  })
 
+  autoUpdater.on('update-downloaded', (info) => {
+    downloadedUpdateReady = true
+    broadcastUpdaterStatus({ type: 'update-downloaded', version: info.version })
     console.log(`[Vectra] Update downloaded: ${info.version}. Will install on app quit.`)
   })
 
@@ -114,6 +136,7 @@ export async function runAutoUpdateCheck(reason: 'startup' | 'settings-enabled' 
 
   checkInFlight = true
   try {
+    broadcastUpdaterStatus({ type: 'checking' })
     const latestLandingVersion = await fetchLatestLandingVersion()
     if (!latestLandingVersion) {
       console.log('[Vectra] Auto-update check skipped: could not detect latest version from landing page.')
@@ -130,18 +153,26 @@ export async function runAutoUpdateCheck(reason: 'startup' | 'settings-enabled' 
 
     autoUpdater.autoDownload = true
     autoUpdater.autoInstallOnAppQuit = true
-    installAfterManualDownload = reason === 'manual'
+    downloadedUpdateReady = false
 
     console.log(`[Vectra] Auto-update check (${reason}): ${currentVersion} -> ${latestLandingVersion}. Checking provider feed.`)
     await autoUpdater.checkForUpdates()
     return true
   } catch (err) {
-    installAfterManualDownload = false
+    downloadedUpdateReady = false
+    const message = err instanceof Error ? err.message : String(err)
+    broadcastUpdaterStatus({ type: 'error', message })
     console.error('[Vectra] Auto-update check failed:', err)
     return false
   } finally {
     checkInFlight = false
   }
+}
+
+export function installDownloadedUpdateNow(): boolean {
+  if (!downloadedUpdateReady) return false
+  autoUpdater.quitAndInstall(false, true)
+  return true
 }
 
 export function scheduleAutoUpdateChecks(): void {

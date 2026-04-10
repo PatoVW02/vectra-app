@@ -66,6 +66,14 @@ export interface LicenseInfo {
   lastValidated: string | null
 }
 
+export type UpdaterStatusEvent =
+  | { type: 'checking' }
+  | { type: 'update-available'; version: string }
+  | { type: 'update-not-available'; version: string }
+  | { type: 'download-progress'; percent: number; transferred: number; total: number; bytesPerSecond: number }
+  | { type: 'update-downloaded'; version: string }
+  | { type: 'error'; message: string }
+
 declare global {
   interface Window {
     electronAPI: {
@@ -114,6 +122,9 @@ declare global {
       removeBgCleanListeners: () => void
       testNotification: () => Promise<void>
       checkForUpdates: () => Promise<boolean>
+      installUpdateNow: () => Promise<boolean>
+      onUpdaterStatus: (cb: (event: UpdaterStatusEvent) => void) => void
+      removeUpdaterListeners: () => void
       requestNotificationPermission: () => Promise<void>
       markOnboardingComplete: () => Promise<void>
       getLoginItem: () => Promise<boolean>

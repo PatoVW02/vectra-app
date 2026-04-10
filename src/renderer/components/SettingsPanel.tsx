@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
-import { VectraSettings, OllamaModel, LicenseInfo } from '../types'
+import { VectraSettings, OllamaModel, LicenseInfo, UpdaterStatusEvent } from '../types'
 import { formatSize } from '../utils/format'
 
 interface SettingsPanelProps {
@@ -88,6 +88,19 @@ function modelShortName(name: string): string {
   return name.replace(/:latest$/, '')
 }
 
+function fmtSpeed(bytesPerSecond: number): string {
+  if (!Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) return '0 KB/s'
+  return `${fmtBytes(bytesPerSecond)}/s`
+}
+
+function fmtEta(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) return 'less than a second'
+  if (seconds < 60) return `${Math.ceil(seconds)}s`
+  const mins = Math.floor(seconds / 60)
+  const secs = Math.ceil(seconds % 60)
+  return secs === 0 ? `${mins}m` : `${mins}m ${secs}s`
+}
+
 function Toggle({ on, onClick, disabled }: { on: boolean; onClick: () => void; disabled?: boolean }) {
   return (
     <button
@@ -112,6 +125,12 @@ export function SettingsPanel({ onClose, onDevDepsChange, quickScanFolders, onQu
   const [scanningNow, setScanningNow] = useState(false)
   const [checkingForUpdates, setCheckingForUpdates] = useState(false)
   const [updateMessage, setUpdateMessage] = useState<string | null>(null)
+  const [updateDownloadProgress, setUpdateDownloadProgress] = useState<number | null>(null)
+  const [updateDownloadTransferred, setUpdateDownloadTransferred] = useState<number | null>(null)
+  const [updateDownloadTotal, setUpdateDownloadTotal] = useState<number | null>(null)
+  const [updateDownloadBps, setUpdateDownloadBps] = useState<number | null>(null)
+  const [updateReadyToInstall, setUpdateReadyToInstall] = useState(false)
+  const [restartingToInstall, setRestartingToInstall] = useState(false)
   const [appVersion, setAppVersion] = useState<string | null>(null)
   const [loginItem, setLoginItem] = useState<boolean | null>(null)
 
@@ -164,6 +183,73 @@ export function SettingsPanel({ onClose, onDevDepsChange, quickScanFolders, onQu
     return () => window.electronAPI.removePullListeners()
   }, [])
 
+  useEffect(() => {
+    const handleUpdaterStatus = (event: UpdaterStatusEvent) => {
+      if (event.type === 'checking') {
+        setUpdateReadyToInstall(false)
+        setUpdateDownloadProgress(null)
+        setUpdateDownloadTransferred(null)
+        setUpdateDownloadTotal(null)
+        setUpdateDownloadBps(null)
+        return
+      }
+
+      if (event.type === 'update-available') {
+        setUpdateMessage(`Update ${event.version} found. Downloading...`)
+        setUpdateDownloadProgress(0)
+        setUpdateDownloadTransferred(0)
+        setUpdateDownloadTotal(null)
+        setUpdateDownloadBps(null)
+        return
+      }
+
+      if (event.type === 'download-progress') {
+        const pct = Number.isFinite(event.percent)
+          ? Math.max(0, Math.min(100, event.percent))
+          : 0
+        setUpdateDownloadProgress(pct)
+        setUpdateDownloadTransferred(event.transferred)
+        setUpdateDownloadTotal(event.total)
+        setUpdateDownloadBps(event.bytesPerSecond)
+        return
+      }
+
+      if (event.type === 'update-downloaded') {
+        setCheckingForUpdates(false)
+        setUpdateDownloadProgress(100)
+        setUpdateDownloadBps(null)
+        setUpdateReadyToInstall(true)
+        setUpdateMessage(`Update ${event.version} downloaded. Restart to install.`)
+        return
+      }
+
+      if (event.type === 'update-not-available') {
+        setCheckingForUpdates(false)
+        setUpdateReadyToInstall(false)
+        setUpdateDownloadProgress(null)
+        setUpdateDownloadTransferred(null)
+        setUpdateDownloadTotal(null)
+        setUpdateDownloadBps(null)
+        setUpdateMessage('No update available')
+        setTimeout(() => setUpdateMessage(null), 3000)
+        return
+      }
+
+      if (event.type === 'error') {
+        setCheckingForUpdates(false)
+        setUpdateReadyToInstall(false)
+        setUpdateDownloadProgress(null)
+        setUpdateDownloadTransferred(null)
+        setUpdateDownloadTotal(null)
+        setUpdateDownloadBps(null)
+        setUpdateMessage(`Update failed: ${event.message}`)
+      }
+    }
+
+    window.electronAPI.onUpdaterStatus(handleUpdaterStatus)
+    return () => window.electronAPI.removeUpdaterListeners()
+  }, [])
+
   // Check Ollama whenever AI is toggled on
   useEffect(() => {
     if (aiEnabled) checkOllama()
@@ -208,21 +294,39 @@ export function SettingsPanel({ onClose, onDevDepsChange, quickScanFolders, onQu
 
   async function handleCheckForUpdates() {
     setCheckingForUpdates(true)
+    setUpdateReadyToInstall(false)
+    setUpdateDownloadProgress(null)
+    setUpdateDownloadTransferred(null)
+    setUpdateDownloadTotal(null)
+    setUpdateDownloadBps(null)
     setUpdateMessage(null)
     try {
       const updateFound = await window.electronAPI.checkForUpdates()
       if (!updateFound) {
         setUpdateMessage('No update available')
         setTimeout(() => setUpdateMessage(null), 3000)
-      } else {
-        setUpdateMessage('Update found. Downloading now, app will restart to install.')
       }
     } catch (err) {
       console.error('Failed to check for updates:', err)
+      setUpdateReadyToInstall(false)
+      setUpdateDownloadProgress(null)
+      setUpdateDownloadTransferred(null)
+      setUpdateDownloadTotal(null)
+      setUpdateDownloadBps(null)
       setUpdateMessage('Failed to check for updates')
       setTimeout(() => setUpdateMessage(null), 3000)
     } finally {
       setCheckingForUpdates(false)
+    }
+  }
+
+  async function handleRestartToInstall() {
+    setRestartingToInstall(true)
+    const started = await window.electronAPI.installUpdateNow()
+    if (!started) {
+      setRestartingToInstall(false)
+      setUpdateMessage('Update is not ready to install yet')
+      setTimeout(() => setUpdateMessage(null), 3000)
     }
   }
 
@@ -765,7 +869,7 @@ export function SettingsPanel({ onClose, onDevDepsChange, quickScanFolders, onQu
               <div className="min-w-0">
                 <p className="text-sm text-zinc-200 font-medium">Auto update</p>
                 <p className="text-xs text-zinc-500 mt-1 leading-relaxed">
-                  Automatically checks the latest release listed on the landing page and downloads updates when a newer version is available.
+                  Automatically updates when a newer version is available.
                 </p>
               </div>
               <Toggle on={!!settings?.autoUpdateEnabled} onClick={toggleAutoUpdate} disabled={!settings} />
@@ -792,6 +896,45 @@ export function SettingsPanel({ onClose, onDevDepsChange, quickScanFolders, onQu
                 <p className="text-xs text-zinc-500 mt-2">
                   {updateMessage}
                 </p>
+              )}
+              {updateDownloadProgress !== null && !updateReadyToInstall && (
+                <div className="mt-3">
+                  <div className="h-1.5 w-full rounded-full bg-zinc-800 overflow-hidden">
+                    <div
+                      className="h-full bg-blue-500 transition-[width] duration-200"
+                      style={{ width: `${Math.round(updateDownloadProgress)}%` }}
+                    />
+                  </div>
+                  <p className="text-[11px] text-zinc-500 mt-1">
+                    Downloading update... {Math.round(updateDownloadProgress)}%
+                  </p>
+                  {(updateDownloadTransferred !== null || updateDownloadTotal !== null || updateDownloadBps !== null) && (
+                    <p className="text-[11px] text-zinc-600 mt-1">
+                      {updateDownloadTransferred !== null && updateDownloadTotal !== null
+                        ? `${fmtBytes(updateDownloadTransferred)} / ${fmtBytes(updateDownloadTotal)}`
+                        : 'Preparing download...'}
+                      {updateDownloadBps !== null && updateDownloadBps > 0
+                        ? ` • ${fmtSpeed(updateDownloadBps)}`
+                        : ''}
+                      {updateDownloadTransferred !== null &&
+                        updateDownloadTotal !== null &&
+                        updateDownloadBps !== null &&
+                        updateDownloadBps > 0 &&
+                        updateDownloadTotal > updateDownloadTransferred
+                        ? ` • ${fmtEta((updateDownloadTotal - updateDownloadTransferred) / updateDownloadBps)} left`
+                        : ''}
+                    </p>
+                  )}
+                </div>
+              )}
+              {updateReadyToInstall && (
+                <button
+                  onClick={handleRestartToInstall}
+                  disabled={restartingToInstall}
+                  className="mt-3 text-xs px-3 py-1.5 rounded-md bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+                >
+                  {restartingToInstall ? 'Restarting...' : 'Restart to install update'}
+                </button>
               )}
               {appVersion && (
                 <p className="text-xs text-zinc-600 mt-2">

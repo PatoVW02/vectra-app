@@ -8,7 +8,7 @@ import { scanDirectoryStreaming } from './scanner'
 import { loadSettings, saveSettings, patchSettings, VectraSettings } from './settings'
 import { rebuildTrayMenu, scheduleBackgroundScan, stopBackgroundScan, runBackgroundScan, updateLastScanPath, setTrayVisibility, testNotification } from './background'
 import { getLicenseInfo, activateLicense, revalidateLicense, deactivateLicense } from './license'
-import { runAutoUpdateCheck } from './updater'
+import { runAutoUpdateCheck, installDownloadedUpdateNow } from './updater'
 
 const execFileAsync = promisify(execFile)
 
@@ -644,6 +644,10 @@ Your recommendation MUST be consistent with your explanation. Do not say deletin
 
   ipcMain.handle('check-for-updates', () => {
     return runAutoUpdateCheck('manual')
+  })
+
+  ipcMain.handle('install-update-now', () => {
+    return installDownloadedUpdateNow()
   })
 
   ipcMain.handle('request-notification-permission', () => {

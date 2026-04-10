@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { DiskEntry } from '../main/scanner'
+import type { UpdaterStatusEvent } from '../main/updater'
 
 // Single persistent listeners — callbacks are swapped, never re-registered.
 const ollamaCallbacks: {
@@ -8,9 +9,14 @@ const ollamaCallbacks: {
   done:  ((error: string | null) => void) | null
 } = { model: null, token: null, done: null }
 
+const updaterCallbacks: {
+  status: ((event: UpdaterStatusEvent) => void) | null
+} = { status: null }
+
 ipcRenderer.on('ollama-model', (_e, model)  => ollamaCallbacks.model?.(model))
 ipcRenderer.on('ollama-token', (_e, token)  => ollamaCallbacks.token?.(token))
 ipcRenderer.on('ollama-done',  (_e, error)  => ollamaCallbacks.done?.(error))
+ipcRenderer.on('updater-status', (_e, event) => updaterCallbacks.status?.(event as UpdaterStatusEvent))
 
 contextBridge.exposeInMainWorld('electronAPI', {
   // ── Scanner ──────────────────────────────────────────────────────────────
@@ -71,6 +77,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   removeBgCleanListeners: () => ipcRenderer.removeAllListeners('bg-clean-requested'),
   testNotification: () => ipcRenderer.invoke('test-notification'),
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
+  installUpdateNow: () => ipcRenderer.invoke('install-update-now') as Promise<boolean>,
+  onUpdaterStatus: (cb: (event: UpdaterStatusEvent) => void) => { updaterCallbacks.status = cb },
+  removeUpdaterListeners: () => { updaterCallbacks.status = null },
   requestNotificationPermission: () => ipcRenderer.invoke('request-notification-permission'),
   markOnboardingComplete: () => ipcRenderer.invoke('mark-onboarding-complete'),
   getLoginItem: () => ipcRenderer.invoke('get-login-item') as Promise<boolean>,
