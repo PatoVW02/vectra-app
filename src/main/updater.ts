@@ -2,7 +2,12 @@ import { app, net } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { loadSettings } from './settings'
 
-const DEFAULT_LANDING_URLS = ['https://vectraapp.com', 'https://vectra-landing.vercel.app']
+const DEFAULT_LANDING_URLS = [
+    'https://vectra-mu.vercel.app.com', 
+    // 'https://vectrapp.com', 
+    // 'https://vectra-app.com',
+    // 'https://vectraapp.com'
+]
 
 let listenersRegistered = false
 let checkInFlight = false
