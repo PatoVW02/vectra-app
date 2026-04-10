@@ -1,14 +1,7 @@
-import { app, net, BrowserWindow } from 'electron'
+import { app, BrowserWindow } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { loadSettings } from './settings'
 import { setQuitting } from './background'
-
-const DEFAULT_LANDING_URLS = [
-    'https://vectra-mu.vercel.app', 
-    // 'https://vectrapp.com', 
-    // 'https://vectra-app.com',
-    // 'https://vectraapp.com'
-]
 
 let listenersRegistered = false
 let checkInFlight = false
@@ -30,32 +23,6 @@ function broadcastUpdaterStatus(event: UpdaterStatusEvent): void {
   }
 }
 
-function resolveLandingUrls(): string[] {
-  const env = process.env['VECTRA_LANDING_PAGE_URLS'] ?? process.env['VECTRA_LANDING_PAGE_URL']
-  if (!env) return DEFAULT_LANDING_URLS
-
-  const parsed = env
-    .split(',')
-    .map(v => v.trim())
-    .filter(Boolean)
-
-  return parsed.length > 0 ? parsed : DEFAULT_LANDING_URLS
-}
-
-function parseVersionFromLanding(html: string): string | null {
-  const patterns = [
-    /releases\/download\/v(\d+\.\d+\.\d+)/i,
-    /Vectra-(\d+\.\d+\.\d+)-[a-z0-9]+\.dmg/i,
-  ]
-
-  for (const pattern of patterns) {
-    const match = html.match(pattern)
-    if (match?.[1]) return match[1]
-  }
-
-  return null
-}
-
 function compareSemver(a: string, b: string): number {
   const aParts = a.replace(/^v/i, '').split('.').map(n => parseInt(n, 10))
   const bParts = b.replace(/^v/i, '').split('.').map(n => parseInt(n, 10))
@@ -70,23 +37,6 @@ function compareSemver(a: string, b: string): number {
 
   return 0
 }
-
-async function fetchLatestLandingVersion(): Promise<string | null> {
-  for (const url of resolveLandingUrls()) {
-    try {
-      const res = await net.fetch(url)
-      if (!res.ok) continue
-      const html = await res.text()
-      const version = parseVersionFromLanding(html)
-      if (version) return version
-    } catch {
-      // Try the next landing URL candidate.
-    }
-  }
-
-  return null
-}
-
 function ensureUpdaterListeners(): void {
   if (listenersRegistered) return
 
@@ -138,17 +88,7 @@ export async function runAutoUpdateCheck(reason: 'startup' | 'settings-enabled' 
   checkInFlight = true
   try {
     broadcastUpdaterStatus({ type: 'checking' })
-    const latestLandingVersion = await fetchLatestLandingVersion()
-    if (!latestLandingVersion) {
-      console.log('[Vectra] Auto-update check skipped: could not detect latest version from landing page.')
-      return false
-    }
-
     const currentVersion = app.getVersion()
-    if (compareSemver(latestLandingVersion, currentVersion) <= 0) {
-      console.log(`[Vectra] Auto-update check (${reason}): already up to date (${currentVersion}).`)
-      return false
-    }
 
     ensureUpdaterListeners()
 
@@ -156,8 +96,15 @@ export async function runAutoUpdateCheck(reason: 'startup' | 'settings-enabled' 
     autoUpdater.autoInstallOnAppQuit = true
     downloadedUpdateReady = false
 
-    console.log(`[Vectra] Auto-update check (${reason}): ${currentVersion} -> ${latestLandingVersion}. Checking provider feed.`)
-    await autoUpdater.checkForUpdates()
+    console.log(`[Vectra] Auto-update check (${reason}): checking provider feed from ${currentVersion}.`)
+    const result = await autoUpdater.checkForUpdates()
+    const nextVersion = result?.updateInfo?.version
+    if (!nextVersion || compareSemver(nextVersion, currentVersion) <= 0) {
+      console.log(`[Vectra] Auto-update check (${reason}): already up to date (${currentVersion}).`)
+      return false
+    }
+
+    console.log(`[Vectra] Auto-update check (${reason}): ${currentVersion} -> ${nextVersion}.`)
     return true
   } catch (err) {
     downloadedUpdateReady = false
