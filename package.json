@@ -37,7 +37,10 @@
     "appId": "com.patricio.vectra",
     "productName": "Vectra",
     "mac": {
-      "target": "dmg",
+      "target": [
+        "dmg",
+        "zip"
+      ],
       "category": "public.app-category.utilities"
     },
     "files": [
