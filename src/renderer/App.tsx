@@ -499,12 +499,15 @@ function AppShell() {
   // Handle "Clean X GB" clicked from tray menu or notification
   useEffect(() => {
     window.electronAPI.onBgCleanRequested((entries) => {
-      setSelectedPaths(new Map(entries.map(e => [e.path, e])))
+      const preselected = showDevDeps
+        ? entries
+        : entries.filter((e) => !isDevDependency(e))
+      setSelectedPaths(new Map(preselected.map(e => [e.path, e])))
       setReviewOpen(true)
       setScanPhase('active')
     })
     return () => window.electronAPI.removeBgCleanListeners()
-  }, [])
+  }, [showDevDeps])
 
   // ── Derived ───────────────────────────────────────────────────────────────
 
