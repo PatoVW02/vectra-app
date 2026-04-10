@@ -7,6 +7,7 @@ export interface NavigationState {
   goBack: () => void
   goTo: (index: number) => void
   reset: () => void
+  resetTo: (path: string) => void
 }
 
 export function useNavigation(): NavigationState {
@@ -30,5 +31,9 @@ export function useNavigation(): NavigationState {
     setStack([])
   }, [])
 
-  return { stack, currentPath, navigate, goBack, goTo, reset }
+  const resetTo = useCallback((path: string) => {
+    setStack([path])
+  }, [])
+
+  return { stack, currentPath, navigate, goBack, goTo, reset, resetTo }
 }

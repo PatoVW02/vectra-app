@@ -1,8 +1,9 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useMemo, memo } from 'react'
 import { createPortal } from 'react-dom'
 import { DiskEntry } from '../types'
 import { formatSize } from '../utils/format'
 import { isCriticalPath } from '../utils/criticalPaths'
+import { buildCleanableTree, TreeNode } from '../utils/buildTree'
 
 // ─── Animated checkmark ───────────────────────────────────────────────────────
 
@@ -72,103 +73,264 @@ function DoneView({ freedKB, onDone }: { freedKB: number; onDone: () => void }) 
   )
 }
 
-// ─── Review row ───────────────────────────────────────────────────────────────
+// ─── Tree helpers ─────────────────────────────────────────────────────────────
 
-interface ReviewRowProps {
-  entry: DiskEntry
-  checked: boolean
-  removing: boolean
-  deleting: boolean
-  onToggle: () => void
+/** Collect paths of all selectable (cleanable) leaf entries under a node. */
+function getSelectableDescendants(node: TreeNode): string[] {
+  const result: string[] = []
+  if (node.isCleanable && node.entry) result.push(node.path)
+  for (const child of node.children) result.push(...getSelectableDescendants(child))
+  return result
 }
 
-function ReviewRow({ entry, checked, removing, deleting, onToggle }: ReviewRowProps) {
-  const critical = isCriticalPath(entry.path)
-  const parentPath = entry.path.replace(/\/[^/]+$/, '') || '/'
+/** Returns true when every selectable item under this node is in removingPaths. */
+function allNodeRemoving(node: TreeNode, removingPaths: Set<string>): boolean {
+  if (node.isCleanable && node.entry) return removingPaths.has(node.path)
+  if (node.children.length === 0) return false
+  return node.children.every(c => allNodeRemoving(c, removingPaths))
+}
+
+// ─── Tree item (recursive, mirrors SmartCleanPanel's TreeItem) ────────────────
+
+interface ReviewTreeItemProps {
+  node: TreeNode
+  depth: number
+  selected: Set<string>
+  removingPaths: Set<string>
+  deleting: boolean
+  onToggle: (path: string) => void
+  /** Incremented to trigger a global expand (expanded=true) or collapse (expanded=false). */
+  expandKey: { seq: number; expanded: boolean }
+}
+
+const ReviewTreeItem = memo(function ReviewTreeItem({
+  node, depth, selected, removingPaths, deleting, onToggle, expandKey,
+}: ReviewTreeItemProps) {
+  const [expanded, setExpanded] = useState(true)
+
+  const hasChildren = node.children.length > 0
+
+  // Respond to global expand / collapse — fires only when seq changes, then local state takes over
+  useEffect(() => {
+    if (!hasChildren) return
+    setExpanded(expandKey.expanded)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expandKey.seq])
+  const isDir = node.entry ? node.entry.isDir : true
+  const critical = isCriticalPath(node.path)
+
+  const selectableDescendants = useMemo(
+    () => (hasChildren ? getSelectableDescendants(node) : null),
+    // node identity is stable from buildCleanableTree memoisation
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [node],
+  )
+
+  // Leaf (cleanable) check state
+  const directlyChecked = node.isCleanable && !!node.entry && !critical && selected.has(node.path)
+
+  // Intermediate (non-cleanable) batch-check state
+  const allDescendantsSelected =
+    !node.isCleanable &&
+    (selectableDescendants?.length ?? 0) > 0 &&
+    (selectableDescendants?.every(p => selected.has(p)) ?? false)
+  const someDescendantsSelected =
+    selectableDescendants?.some(p => selected.has(p)) ?? false
+
+  const batchToggle = useCallback(() => {
+    if (!selectableDescendants) return
+    const allSelected = selectableDescendants.every(p => selected.has(p))
+    for (const p of selectableDescendants) {
+      if (allSelected ? selected.has(p) : !selected.has(p)) onToggle(p)
+    }
+  }, [selectableDescendants, selected, onToggle])
+
+  // Fade-out animation for leaf items being deleted
+  const removing = node.isCleanable && !!node.entry && removingPaths.has(node.path)
+
+  // Hide entire subtree once all its selectable items are going away
+  if (!node.isCleanable && node.children.length > 0 && allNodeRemoving(node, removingPaths)) {
+    return null
+  }
 
   return (
-    <div className={[
-      'flex items-center gap-3 px-6 border-b border-white/[0.04] overflow-hidden',
-      'transition-all duration-300 ease-out',
-      removing
-        ? 'max-h-0 opacity-0 -translate-x-6 py-0 border-transparent'
-        : 'max-h-[72px] opacity-100 translate-x-0 py-3'
-    ].join(' ')}>
-
-      {/* Checkbox */}
-      <button
-        onClick={onToggle}
-        disabled={deleting || critical}
+    <>
+      <div
         className={[
-          'w-4 h-4 rounded border shrink-0 flex items-center justify-center transition-colors',
-          'disabled:cursor-not-allowed',
-          critical
-            ? 'border-zinc-700 bg-transparent opacity-30'
-            : checked
-            ? 'bg-blue-600 border-blue-600'
-            : 'border-zinc-600 bg-transparent'
-        ].join(' ')}
+          'flex items-center gap-1.5 py-2 hover:bg-white/[0.04] transition-colors',
+          removing
+            ? 'opacity-0 overflow-hidden max-h-0 py-0 pointer-events-none transition-all duration-300 ease-out'
+            : '',
+        ].filter(Boolean).join(' ')}
+        style={{ paddingLeft: 12 + depth * 16, paddingRight: 12 }}
       >
-        {checked && !critical && (
-          <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+        {/* Expand/collapse chevron — invisible spacer for leaves */}
+        <button
+          onClick={() => hasChildren && setExpanded(v => !v)}
+          className={[
+            'w-4 h-4 flex items-center justify-center shrink-0 rounded text-zinc-500 hover:text-zinc-300 transition-colors',
+            !hasChildren && 'invisible',
+          ].filter(Boolean).join(' ')}
+        >
+          <svg
+            className={['w-3 h-3 transition-transform', expanded ? 'rotate-90' : ''].join(' ')}
+            fill="currentColor" viewBox="0 0 20 20"
+          >
+            <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
           </svg>
+        </button>
+
+        {/* Checkbox */}
+        {node.isCleanable && node.entry ? (
+          // Selectable leaf
+          <button
+            onClick={() => !critical && onToggle(node.path)}
+            disabled={deleting || critical}
+            className={[
+              'w-4 h-4 rounded border shrink-0 flex items-center justify-center transition-colors disabled:cursor-not-allowed',
+              critical
+                ? 'border-zinc-700 bg-transparent opacity-30'
+                : directlyChecked
+                ? 'bg-blue-600 border-blue-600'
+                : 'border-zinc-600 bg-transparent',
+            ].join(' ')}
+          >
+            {directlyChecked && !critical && (
+              <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+              </svg>
+            )}
+          </button>
+        ) : (selectableDescendants?.length ?? 0) > 0 ? (
+          // Intermediate folder — batch toggle all descendants
+          <button
+            onClick={batchToggle}
+            disabled={deleting}
+            className={[
+              'w-4 h-4 rounded border shrink-0 flex items-center justify-center transition-colors disabled:cursor-not-allowed',
+              allDescendantsSelected
+                ? 'bg-blue-600 border-blue-600'
+                : someDescendantsSelected
+                ? 'bg-blue-900/60 border-blue-500'
+                : 'border-zinc-600 bg-transparent',
+            ].join(' ')}
+          >
+            {allDescendantsSelected && (
+              <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+              </svg>
+            )}
+            {!allDescendantsSelected && someDescendantsSelected && (
+              <svg className="w-2.5 h-2.5 text-blue-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 12h14" />
+              </svg>
+            )}
+          </button>
+        ) : (
+          <div className="w-4 h-4 shrink-0" />
         )}
-      </button>
 
-      {/* Icon */}
-      {entry.isDir ? (
-        <svg className="w-4 h-4 text-blue-400 shrink-0" fill="currentColor" viewBox="0 0 20 20">
-          <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
-        </svg>
-      ) : (
-        <svg className="w-4 h-4 text-zinc-400 shrink-0" fill="currentColor" viewBox="0 0 20 20">
-          <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clipRule="evenodd" />
-        </svg>
-      )}
+        {/* Folder / file icon — dimmed for intermediate nodes */}
+        {isDir
+          ? <svg
+              className={['w-3.5 h-3.5 shrink-0', node.isCleanable ? 'text-blue-400' : 'text-zinc-600'].join(' ')}
+              fill="currentColor" viewBox="0 0 20 20"
+            >
+              <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
+            </svg>
+          : <svg
+              className={['w-3.5 h-3.5 shrink-0', node.isCleanable ? 'text-zinc-300' : 'text-zinc-600'].join(' ')}
+              fill="currentColor" viewBox="0 0 20 20"
+            >
+              <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clipRule="evenodd" />
+            </svg>
+        }
 
-      {/* Name + path */}
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center justify-between gap-2">
+        {/* Label + size */}
+        <button
+          onClick={() => {
+            if (!node.isCleanable || !node.entry || critical) return
+            onToggle(node.path)
+          }}
+          className="flex-1 min-w-0 flex items-center justify-between gap-1 text-left min-w-0"
+        >
           <span className={[
-            'text-sm truncate leading-snug',
-            critical ? 'text-zinc-500' : 'text-zinc-200'
+            'text-xs truncate leading-snug',
+            critical
+              ? 'text-zinc-500'
+              : node.isCleanable
+              ? 'text-zinc-200 font-medium'
+              : 'text-zinc-500',
           ].join(' ')}>
-            {entry.name}
+            {node.label}
           </span>
-          <span className="text-xs text-zinc-500 tabular-nums shrink-0">{formatSize(entry.sizeKB)}</span>
-        </div>
-        <span className="text-[11px] text-zinc-600 font-mono truncate block mt-0.5">{parentPath}</span>
+          {node.totalKB > 0 && (
+            <span className="text-[10px] text-zinc-600 tabular-nums shrink-0">
+              {formatSize(node.totalKB)}
+            </span>
+          )}
+        </button>
+
+        {/* Protected badge */}
+        {critical && (
+          <span className="text-[10px] text-amber-500 shrink-0 border border-amber-500/30 rounded px-1.5 py-0.5">
+            Protected
+          </span>
+        )}
       </div>
 
-      {/* Protected badge */}
-      {critical && (
-        <span className="text-[10px] text-amber-500 shrink-0 border border-amber-500/30 rounded px-1.5 py-0.5">
-          Protected
-        </span>
-      )}
-    </div>
+      {/* Recurse into children */}
+      {expanded && hasChildren && node.children.map(child => (
+        <ReviewTreeItem
+          key={child.path}
+          node={child}
+          depth={depth + 1}
+          selected={selected}
+          removingPaths={removingPaths}
+          deleting={deleting}
+          onToggle={onToggle}
+          expandKey={expandKey}
+        />
+      ))}
+    </>
   )
-}
+})
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
 interface ReviewPanelProps {
   entries: DiskEntry[]
-  onConfirm: (paths: string[]) => Promise<void>
+  onConfirm: (paths: string[], totalKB: number) => Promise<void>
   onCancel: () => void
+  onDone: () => void
 }
 
-export function ReviewPanel({ entries, onConfirm, onCancel }: ReviewPanelProps) {
+export function ReviewPanel({ entries, onConfirm, onCancel, onDone }: ReviewPanelProps) {
   const [selected, setSelected] = useState<Set<string>>(
-    () => new Set(entries.filter(e => !isCriticalPath(e.path)).map(e => e.path))
+    () => new Set(entries.filter(e => !isCriticalPath(e.path)).map(e => e.path)),
   )
   const [phase, setPhase] = useState<'review' | 'deleting' | 'done'>('review')
   const [removingPaths, setRemovingPaths] = useState<Set<string>>(new Set())
   const [freedKB, setFreedKB] = useState(0)
   const [mounted, setMounted] = useState(false)
+  const [homeDir, setHomeDir] = useState('')
+  const [expandKey, setExpandKey] = useState({ seq: 0, expanded: true })
 
   useEffect(() => { requestAnimationFrame(() => setMounted(true)) }, [])
+  useEffect(() => { window.electronAPI.getHomeDir().then(setHomeDir) }, [])
+
+  // All entries are selectable in ReviewPanel — pass them all as selectablePaths so
+  // buildCleanableTree marks each one as isCleanable regardless of file-type heuristics.
+  const selectablePaths = useMemo(
+    () => new Set(entries.map(e => e.path)),
+    [entries],
+  )
+
+  // Full recursive directory tree, identical structure to SmartCleanPanel's tree.
+  const treeNodes = useMemo(() => {
+    if (!homeDir) return []
+    return buildCleanableTree(entries, homeDir, selectablePaths)
+  }, [entries, homeDir, selectablePaths])
 
   const toggle = useCallback((path: string) => {
     setSelected(prev => {
@@ -185,7 +347,7 @@ export function ReviewPanel({ entries, onConfirm, onCancel }: ReviewPanelProps) 
   const toggleAll = useCallback(() => {
     setSelected(allChecked
       ? new Set()
-      : new Set(nonCritical.map(e => e.path))
+      : new Set(nonCritical.map(e => e.path)),
     )
   }, [allChecked, nonCritical])
 
@@ -198,7 +360,7 @@ export function ReviewPanel({ entries, onConfirm, onCancel }: ReviewPanelProps) 
     setFreedKB(toDelete.reduce((s, e) => s + e.sizeKB, 0))
     setPhase('deleting')
 
-    // Stagger items out: cap total animation at 700ms
+    // Stagger items out: cap total animation at 700 ms
     const stagger = Math.min(55, 700 / Math.max(toDelete.length, 1))
     toDelete.forEach((entry, i) => {
       setTimeout(() => {
@@ -207,7 +369,7 @@ export function ReviewPanel({ entries, onConfirm, onCancel }: ReviewPanelProps) 
     })
 
     // Run deletion in parallel with animation
-    await onConfirm(toDelete.map(e => e.path))
+    await onConfirm(toDelete.map(e => e.path), toDelete.reduce((s, e) => s + e.sizeKB, 0))
 
     // Show done state after last animation finishes
     setTimeout(() => setPhase('done'), toDelete.length * stagger + 380)
@@ -218,11 +380,10 @@ export function ReviewPanel({ entries, onConfirm, onCancel }: ReviewPanelProps) 
       className={[
         'fixed inset-0 z-50 flex flex-col bg-zinc-950',
         'transition-opacity duration-200 ease-out',
-        mounted ? 'opacity-100' : 'opacity-0'
+        mounted ? 'opacity-100' : 'opacity-0',
       ].join(' ')}
       style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
     >
-
       {phase === 'done' ? (
         <>
           {/* Spacer matching header height so done view is vertically centred below traffic lights */}
@@ -230,7 +391,7 @@ export function ReviewPanel({ entries, onConfirm, onCancel }: ReviewPanelProps) 
             className="shrink-0 border-b border-white/5"
             style={{ paddingTop: '36px' } as React.CSSProperties}
           />
-          <DoneView freedKB={freedKB} onDone={onCancel} />
+          <DoneView freedKB={freedKB} onDone={onDone} />
         </>
       ) : (
         <>
@@ -271,49 +432,59 @@ export function ReviewPanel({ entries, onConfirm, onCancel }: ReviewPanelProps) 
             )}
           </div>
 
-          {/* Select-all row */}
-          {nonCritical.length > 1 && (
-            <div className="shrink-0 flex items-center gap-3 px-6 py-2.5 border-b border-white/5">
-              <button
-                onClick={toggleAll}
-                disabled={phase === 'deleting'}
-                className={[
-                  'w-4 h-4 rounded border shrink-0 flex items-center justify-center transition-colors',
-                  'disabled:cursor-not-allowed',
-                  allChecked
-                    ? 'bg-blue-600 border-blue-600'
-                    : someChecked
-                    ? 'bg-blue-900/60 border-blue-500'
-                    : 'border-zinc-600 bg-transparent'
-                ].join(' ')}
-              >
-                {allChecked && (
-                  <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                  </svg>
-                )}
-                {!allChecked && someChecked && (
-                  <svg className="w-2.5 h-2.5 text-blue-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 12h14" />
-                  </svg>
-                )}
-              </button>
-              <span className="text-xs text-zinc-500 select-none">
-                {allChecked ? 'Deselect all' : 'Select all'}
-              </span>
-            </div>
-          )}
+          {/* Select-all + expand/collapse toolbar */}
+          <div className="shrink-0 flex items-center gap-3 px-6 py-2.5 border-b border-white/5">
+            {nonCritical.length > 1 && (
+              <>
+                <button
+                  onClick={toggleAll}
+                  disabled={phase === 'deleting'}
+                  className={[
+                    'w-4 h-4 rounded border shrink-0 flex items-center justify-center transition-colors',
+                    'disabled:cursor-not-allowed',
+                    allChecked
+                      ? 'bg-blue-600 border-blue-600'
+                      : someChecked
+                      ? 'bg-blue-900/60 border-blue-500'
+                      : 'border-zinc-600 bg-transparent',
+                  ].join(' ')}
+                >
+                  {allChecked && (
+                    <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                    </svg>
+                  )}
+                  {!allChecked && someChecked && (
+                    <svg className="w-2.5 h-2.5 text-blue-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 12h14" />
+                    </svg>
+                  )}
+                </button>
+                <span className="text-xs text-zinc-500 select-none">
+                  {allChecked ? 'Deselect all' : 'Select all'}
+                </span>
+              </>
+            )}
+            <button
+              onClick={() => setExpandKey(prev => ({ seq: prev.seq + 1, expanded: !prev.expanded }))}
+              className="ml-auto text-[10px] text-zinc-600 hover:text-zinc-400 transition-colors select-none"
+            >
+              {expandKey.expanded ? 'Collapse all' : 'Expand all'}
+            </button>
+          </div>
 
-          {/* List */}
-          <div className="flex-1 overflow-y-auto min-h-0">
-            {entries.map(entry => (
-              <ReviewRow
-                key={entry.path}
-                entry={entry}
-                checked={selected.has(entry.path)}
-                removing={removingPaths.has(entry.path)}
+          {/* Recursive directory tree */}
+          <div className="scrollbar-dark flex-1 overflow-y-auto min-h-0">
+            {treeNodes.map(node => (
+              <ReviewTreeItem
+                key={node.path}
+                node={node}
+                depth={0}
+                selected={selected}
+                removingPaths={removingPaths}
                 deleting={phase === 'deleting'}
-                onToggle={() => toggle(entry.path)}
+                onToggle={toggle}
+                expandKey={expandKey}
               />
             ))}
           </div>
@@ -348,6 +519,6 @@ export function ReviewPanel({ entries, onConfirm, onCancel }: ReviewPanelProps) 
         </>
       )}
     </div>,
-    document.body
+    document.body,
   )
 }

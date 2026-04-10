@@ -4,7 +4,7 @@ interface BreadcrumbProps {
 }
 
 function displayName(path: string, isRoot: boolean): string {
-  if (path === '/') return 'Root'
+  if (path === '/') return 'root'
   const base = path.split('/').filter(Boolean).pop() ?? path
   // The very first stack entry (scan root) shows just its folder name, not the full path
   return isRoot ? base : base

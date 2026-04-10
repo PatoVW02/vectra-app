@@ -10,8 +10,14 @@ import { SmartCleanPanel } from './components/SmartCleanPanel'
 import { ReviewPanel } from './components/ReviewPanel'
 import { useNavigation } from './hooks/useNavigation'
 import { useTreeScanner } from './hooks/useTreeScanner'
-import { isCleanable } from './utils/cleanable'
+import { isCleanable, isDevDependency } from './utils/cleanable'
+import { isCriticalPath } from './utils/criticalPaths'
 import { DiskEntry } from './types'
+import { SettingsPanel } from './components/SettingsPanel'
+import { OnboardingFlow } from './components/OnboardingFlow'
+import { useLicense } from './hooks/useLicense'
+import { UpgradeModal } from './components/UpgradeModal'
+import { LicenseModal } from './components/LicenseModal'
 
 interface ContextMenuState {
   entry: DiskEntry
@@ -36,15 +42,56 @@ function SlideUpBar({ children }: { children: ReactNode }) {
   )
 }
 
+type ScanMode = 'quick' | 'deep'
+
+/** Well-known home directory folders that resolve to ~/name rather than ~/Library/name. */
+const HOME_FOLDER_NAMES = new Set(['Downloads'])
+
 const MIN_PANEL_WIDTH = 220
 const MAX_PANEL_WIDTH = 600
-const DEFAULT_PANEL_WIDTH = 288
+const DEFAULT_PANEL_WIDTH = 400
 // Split ratio: fraction of panel height given to InfoPanel (top). 0.5 = equal.
 const DEFAULT_SPLIT = 0.5
 const MIN_SPLIT = 0.2
 const MAX_SPLIT = 0.8
 
 export function App() {
+  const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null)
+
+  useEffect(() => {
+    window.electronAPI.getSettings().then((s) => setOnboardingDone(s.onboardingComplete))
+  }, [])
+
+  if (onboardingDone === null) return null // wait for settings to load
+
+  if (!onboardingDone) {
+    return <OnboardingFlow onComplete={() => setOnboardingDone(true)} />
+  }
+
+  return <AppShell />
+}
+
+function AppShell() {
+  const [scanMode, setScanMode] = useState<ScanMode>('deep')
+  const [showDevDeps, setShowDevDeps] = useState(false)
+  const [quickScanFolders, setQuickScanFolders] = useState<string[]>(['Caches', 'Logs', 'Developer', 'Containers'])
+  const [homeDir, setHomeDir] = useState<string | null>(null)
+
+  // Derived from homeDir — the ~/Library path used as quick scan root
+  const QUICK_SCAN_PATH = homeDir ? `${homeDir}/Library` : null
+
+  // Load initial settings + home dir from main process (process.env.HOME is
+  // not reliably available in the Vite-built renderer bundle)
+  useEffect(() => {
+    Promise.all([
+      window.electronAPI.getSettings(),
+      window.electronAPI.getHomeDir(),
+    ]).then(([s, home]) => {
+      setShowDevDeps(s.showDevDependencies ?? false)
+      setQuickScanFolders(s.quickScanFolders ?? ['Caches', 'Logs', 'Developer', 'Containers'])
+      setHomeDir(home)
+    })
+  }, [])
   const [selectedPath, setSelectedPath] = useState('/')
   const [rootPath, setRootPath] = useState<string | null>(null)
   const [selectedPaths, setSelectedPaths] = useState<Map<string, DiskEntry>>(new Map())
@@ -52,12 +99,18 @@ export function App() {
   const [scanPhase, setScanPhase] = useState<'welcome' | 'departing' | 'active'>('welcome')
   const [scanTrigger, setScanTrigger] = useState(0)
 
+  const { license, isPremium, activate, deactivate } = useLicense()
+  const [upgradeOpen, setUpgradeOpen] = useState(false)
+  const [licenseOpen, setLicenseOpen] = useState(false)
+
   // Independent panel states — both can be open simultaneously
   const [infoPanelEntry, setInfoPanelEntry] = useState<DiskEntry | null>(null)
   const [smartCleanOpen, setSmartCleanOpen] = useState(false)
   const [reviewOpen, setReviewOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
 
   // Smart Clean session state — reset on every new scan
+  const prevScanning = useRef(false)
   const smartCleanEverOpened = useRef(false)
   const [savedLeftoverSelection, setSavedLeftoverSelection] = useState<Set<string> | null>(null)
 
@@ -74,22 +127,130 @@ export function App() {
   const panelVisible = infoPanelEntry !== null || smartCleanOpen
   const bothOpen = infoPanelEntry !== null && smartCleanOpen
 
-  const { stack, currentPath, navigate, goTo, reset } = useNavigation()
-  const { tree, scanning, scannedCount, removeEntries, cancelScan } = useTreeScanner(rootPath, scanTrigger)
+  const { stack, currentPath, navigate, goTo, resetTo } = useNavigation()
 
-  const currentEntries = (currentPath ? tree.get(currentPath) : undefined) ?? []
+  // In quick mode, the allowed folder paths act as a filter for both the block
+  // view and Smart Clean. Deep mode = no filter (null).
+  const quickScanAllowedPaths = useMemo(() => {
+    if (scanMode !== 'quick' || !QUICK_SCAN_PATH || quickScanFolders.length === 0) return null
+    return new Set(quickScanFolders.map(f => {
+      if (f.startsWith('/')) return f
+      if (HOME_FOLDER_NAMES.has(f) && homeDir) return `${homeDir}/${f}`
+      return `${QUICK_SCAN_PATH}/${f}`
+    }))
+  }, [scanMode, quickScanFolders, QUICK_SCAN_PATH, homeDir])
+
+  // Paths to actually scan in Quick mode: ~/Library (when predefined Library folders are enabled)
+  // plus any absolute custom paths that live outside of ~/Library.
+  const quickScanPaths = useMemo(() => {
+    if (scanMode !== 'quick' || !QUICK_SCAN_PATH || quickScanFolders.length === 0) return null
+    const paths: string[] = []
+    // Library-relative folders → scan ~/Library once
+    if (quickScanFolders.some(f => !f.startsWith('/') && !HOME_FOLDER_NAMES.has(f))) paths.push(QUICK_SCAN_PATH)
+    // Home-relative well-known folders (e.g. Downloads) → scan each directly
+    for (const f of quickScanFolders) {
+      if (!f.startsWith('/') && HOME_FOLDER_NAMES.has(f) && homeDir) paths.push(`${homeDir}/${f}`)
+    }
+    // Absolute custom paths outside ~/Library
+    for (const f of quickScanFolders) {
+      if (f.startsWith('/') && !f.startsWith(QUICK_SCAN_PATH + '/')) paths.push(f)
+    }
+    return paths.length > 0 ? paths : null
+  }, [scanMode, quickScanFolders, QUICK_SCAN_PATH, homeDir])
+
+  const { tree, scanning, scannedCount, removeEntries, cancelScan } = useTreeScanner(rootPath, scanTrigger, quickScanPaths)
+
+  // At the root level of a quick scan only show the configured subfolders; deep
+  // into the tree (or in deep mode) show everything as normal.
+  const currentEntries = useMemo(() => {
+    const raw = (currentPath ? tree.get(currentPath) : undefined) ?? []
+    if (!quickScanAllowedPaths || currentPath !== rootPath) return raw
+    // At the quick scan root: Library subfolder entries + home-relative entries + custom absolute entries
+    const libraryEntries = raw.filter(e => quickScanAllowedPaths.has(e.path))
+    const homeEntries: DiskEntry[] = quickScanFolders
+      .filter(f => !f.startsWith('/') && HOME_FOLDER_NAMES.has(f) && homeDir)
+      .map(f => {
+        const resolvedPath = `${homeDir}/${f}`
+        if (!quickScanAllowedPaths.has(resolvedPath)) return null
+        const children = tree.get(resolvedPath) ?? []
+        const totalKB = children.reduce((s, e) => s + e.sizeKB, 0)
+        return { name: f, path: resolvedPath, sizeKB: totalKB, isDir: true } as DiskEntry
+      })
+      .filter((e): e is DiskEntry => e !== null)
+    const customEntries: DiskEntry[] = quickScanFolders
+      .filter(f =>
+        f.startsWith('/') &&
+        quickScanAllowedPaths.has(f) &&
+        (!QUICK_SCAN_PATH || !f.startsWith(QUICK_SCAN_PATH + '/'))
+      )
+      .map(f => {
+        const children = tree.get(f) ?? []
+        const totalKB = children.reduce((s, e) => s + e.sizeKB, 0)
+        return { name: f.split('/').pop() ?? f, path: f, sizeKB: totalKB, isDir: true }
+      })
+    return [...libraryEntries, ...homeEntries, ...customEntries].sort((a, b) => b.sizeKB - a.sizeKB)
+  }, [tree, currentPath, rootPath, quickScanAllowedPaths, quickScanFolders, QUICK_SCAN_PATH, homeDir])
 
   const allCleanable = useMemo(() => {
     const result = new Map<string, DiskEntry>()
+    // Pre-compute prefix list once so the inner loop is cheap
+    const allowedPrefixes = quickScanAllowedPaths ? [...quickScanAllowedPaths] : null
+
+    // Downloads directories that are the explicit target of this scan (rootPath itself
+    // is a Downloads folder, or a quick-scan path is a Downloads folder).
+    // Their direct children are all treated as cleanable — the whole point of scanning
+    // Downloads is to clean it up.
+    const downloadsParents = new Set<string>()
+    if (rootPath && rootPath.split('/').pop()?.toLowerCase() === 'downloads') {
+      downloadsParents.add(rootPath)
+    }
+    if (quickScanAllowedPaths) {
+      for (const p of quickScanAllowedPaths) {
+        if (p.split('/').pop()?.toLowerCase() === 'downloads') downloadsParents.add(p)
+      }
+    }
+
     for (const entries of tree.values()) {
       for (const entry of entries) {
-        if (isCleanable(entry)) result.set(entry.path, entry)
+        const isDev = showDevDeps && isDevDependency(entry)
+
+        // Direct children of a targeted Downloads folder are always cleanable
+        const parentDir = entry.path.slice(0, entry.path.lastIndexOf('/'))
+        const isDownloadsItem = downloadsParents.size > 0
+          && downloadsParents.has(parentDir)
+          && entry.sizeKB > 0
+
+        if (allowedPrefixes && !isDev && !isDownloadsItem) {
+          // For regular cache/temp entries: restrict to the quick-scan allowed paths
+          // (e.g. ~/Library/Caches, ~/Library/Logs, custom absolute paths).
+          // Dev dependencies are intentionally exempt from this filter — they have their
+          // own guards (MANAGED_PATH_SUBSTRINGS / SYSTEM_PATH_PREFIXES) and should
+          // surface from anywhere the scanner visited, including non-preset Library
+          // subdirs and any custom quick-scan paths the user has added.
+          const ok = allowedPrefixes.some(p => entry.path === p || entry.path.startsWith(p + '/'))
+          if (!ok) continue
+        }
+        if (isCleanable(entry) || isDev || isDownloadsItem)
+          result.set(entry.path, entry)
       }
     }
     return result
-  }, [tree])
+  }, [tree, showDevDeps, quickScanAllowedPaths, rootPath])
 
   const cleanableCount = allCleanable.size
+
+  // Notify tray when a manual scan finishes
+  // Use allCleanable so the value matches what Smart Clean's Caches & Temp section shows
+  const allCleanableRef = useRef(allCleanable)
+  allCleanableRef.current = allCleanable
+  useEffect(() => {
+    if (prevScanning.current && !scanning && rootPath) {
+      let foundKB = 0
+      for (const e of allCleanableRef.current.values()) foundKB += e.sizeKB
+      window.electronAPI.notifyManualScanDone(foundKB)
+    }
+    prevScanning.current = scanning
+  }, [scanning])
 
   // ── Panel drag handlers ────────────────────────────────────────────────────
 
@@ -132,27 +293,30 @@ export function App() {
 
   // ── Scan ──────────────────────────────────────────────────────────────────
 
-  const handleScan = useCallback(() => {
-    reset()
-    navigate(selectedPath)
-    setRootPath(selectedPath)
+  const handleScan = useCallback((pathOverride?: string) => {
+    const path = pathOverride ?? selectedPath
+    resetTo(path)
+    setRootPath(path)
     setScanTrigger(t => t + 1)
+    window.electronAPI.updateLastScanPath(path)
     setSelectedPaths(new Map())
     setContextMenu(null)
     setInfoPanelEntry(null)
     setSmartCleanOpen(false)
     smartCleanEverOpened.current = false
     setSavedLeftoverSelection(null)
-  }, [selectedPath, navigate, reset])
+  }, [selectedPath, resetTo])
 
   /** Triggered by the Scan button on the welcome screen — animates controls out then starts scan. */
   const handleScanFromWelcome = useCallback(() => {
+    const effectivePath = scanMode === 'quick' && QUICK_SCAN_PATH ? QUICK_SCAN_PATH : selectedPath
+    if (scanMode === 'quick' && QUICK_SCAN_PATH) setSelectedPath(QUICK_SCAN_PATH)
     setScanPhase('departing')
     setTimeout(() => {
       setScanPhase('active')
-      handleScan()
+      handleScan(effectivePath)
     }, 320)
-  }, [handleScan])
+  }, [handleScan, scanMode, selectedPath, QUICK_SCAN_PATH])
 
   const handleChooseFolder = useCallback(async () => {
     const picked = await window.electronAPI.openDirectory()
@@ -207,13 +371,13 @@ export function App() {
   // ── Smart clean ───────────────────────────────────────────────────────────
 
   const handleSmartClean = useCallback(() => {
+    if (!isPremium) { setUpgradeOpen(true); return }
     if (!smartCleanEverOpened.current) {
-      // First open this scan session — pre-select all cleanable items
       setSelectedPaths((prev) => new Map([...prev, ...allCleanable]))
       smartCleanEverOpened.current = true
     }
     setSmartCleanOpen(true)
-  }, [allCleanable])
+  }, [allCleanable, isPremium])
 
   const handleSmartCleanToggle = useCallback((path: string, entry: DiskEntry) => {
     setSelectedPaths((prev) => {
@@ -248,28 +412,51 @@ export function App() {
   // ── Trash ─────────────────────────────────────────────────────────────────
 
   /** Called by ReviewPanel after the user confirms. Trashes only the paths they kept selected. */
-  const handleConfirmTrash = useCallback(async (paths: string[]) => {
+  const handleConfirmTrash = useCallback(async (paths: string[], totalKB: number) => {
     if (paths.length === 0) return
     const err = await window.electronAPI.trashEntries(paths)
     if (!err) {
       removeEntries(paths)
-      setSelectedPaths((prev) => {
-        const next = new Map(prev)
-        for (const p of paths) next.delete(p)
-        return next
-      })
+      window.electronAPI.notifyCleaned(totalKB)
     }
   }, [removeEntries])
+
+  // Cmd+, opens settings
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.metaKey && e.key === ',') {
+        e.preventDefault()
+        setSettingsOpen(true)
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [])
+
+  // Handle "Clean X GB" clicked from tray menu or notification
+  useEffect(() => {
+    window.electronAPI.onBgCleanRequested((entries) => {
+      setSelectedPaths(new Map(entries.map(e => [e.path, e])))
+      setReviewOpen(true)
+      setScanPhase('active')
+    })
+    return () => window.electronAPI.removeBgCleanListeners()
+  }, [])
 
   // ── Derived ───────────────────────────────────────────────────────────────
 
   const selectedEntries = [...selectedPaths.values()]
-  const selectedPathsSet = new Set(selectedPaths.keys())
+  const selectedPathsSet = useMemo(() => new Set(selectedPaths.keys()), [selectedPaths])
   const showSelectionBar = selectedEntries.length > 0 && !smartCleanOpen
+
+  // In quick scan, cleanable entries can span multiple roots (~/Library, ~/Downloads,
+  // custom absolute paths). Use homeDir as the common ancestor so buildCleanableTree
+  // can build correct relative paths for all of them. Fall back to rootPath in deep scan.
+  const smartCleanRootPath = scanMode === 'quick' && homeDir ? homeDir : (rootPath ?? '/')
 
   return (
     <div className="flex flex-col h-screen bg-zinc-950 text-zinc-100 select-none overflow-hidden">
-      <Toolbar />
+      <Toolbar onSettingsOpen={() => setSettingsOpen(true)} />
 
       {scanPhase === 'active' && stack.length > 0 && (
         <div className="border-b border-white/5">
@@ -305,28 +492,50 @@ export function App() {
                 {/* Title + subtitle */}
                 <div className="flex flex-col items-center gap-2">
                   <p className="text-2xl font-semibold tracking-tight text-zinc-200">Vectra</p>
-                  <p className="text-sm text-zinc-500">Select a folder and scan to see what's taking up space.</p>
+                  <p className="text-sm text-zinc-500">
+                    {scanMode === 'quick' ? 'Scan common cleanup locations.' : 'Select a folder and scan to see what\'s taking up space.'}
+                  </p>
                 </div>
 
                 {/* Folder + action controls */}
                 <div className="flex flex-col items-center gap-3">
-                  <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.06]">
-                    <svg className="w-3.5 h-3.5 text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
-                    </svg>
-                    <span
-                      className="text-xs text-zinc-400 font-mono truncate max-w-[200px]"
-                      title={selectedPath}
-                    >
-                      {selectedPath === '/' ? 'Root' : selectedPath}
-                    </span>
-                    <button
-                      onClick={handleChooseFolder}
-                      className="text-[11px] text-zinc-500 hover:text-zinc-300 transition-colors ml-1 border-l border-white/10 pl-2"
-                    >
-                      Change
-                    </button>
+
+                  {/* Mode toggle */}
+                  <div className="flex items-center gap-0.5 bg-white/[0.05] rounded-lg p-0.5">
+                    {(['quick', 'deep'] as ScanMode[]).map((mode) => (
+                      <button
+                        key={mode}
+                        onClick={() => setScanMode(mode)}
+                        className={['px-4 py-1.5 rounded-md text-xs font-medium transition-colors capitalize', scanMode === mode ? 'bg-blue-600 text-white' : 'text-zinc-500 hover:text-zinc-300'].join(' ')}
+                      >
+                        {mode}
+                      </button>
+                    ))}
                   </div>
+
+                  {/* Folder picker — deep mode only */}
+                  {scanMode === 'deep' ? (
+                    <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.06]">
+                      <svg className="w-3.5 h-3.5 text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
+                      </svg>
+                      <span className="text-xs text-zinc-400 font-mono truncate max-w-[200px]" title={selectedPath}>
+                        {selectedPath === '/' ? 'root' : selectedPath}
+                      </span>
+                      <button
+                        onClick={handleChooseFolder}
+                        className="text-[11px] text-zinc-500 hover:text-zinc-300 transition-colors ml-1 border-l border-white/10 pl-2"
+                      >
+                        Change
+                      </button>
+                    </div>
+                  ) : (
+                  <p className="text-xs text-zinc-600">
+                    {quickScanFolders.length > 0
+                      ? quickScanFolders.map(f => f.startsWith('/') ? f.split('/').pop() : f).join(' · ')
+                      : 'No folders selected — configure in Settings'}
+                  </p>
+                  )}
 
                   <button
                     onClick={handleScanFromWelcome}
@@ -363,7 +572,9 @@ export function App() {
                   <InfoPanel
                     entry={infoPanelEntry}
                     isSelected={selectedPaths.has(infoPanelEntry.path)}
+                    isPremium={isPremium}
                     onClose={() => setInfoPanelEntry(null)}
+                    onUpgrade={() => setUpgradeOpen(true)}
                     onToggleSelect={(entry) => {
                       setSelectedPaths((prev) => {
                         const next = new Map(prev)
@@ -392,8 +603,9 @@ export function App() {
                 >
                   <SmartCleanPanel
                     allCleanable={allCleanable}
+                    fullTree={tree}
                     selectedPaths={selectedPathsSet}
-                    rootPath={rootPath ?? '/'}
+                    rootPath={smartCleanRootPath}
                     onToggle={handleSmartCleanToggle}
                     onSelectAll={handleSmartCleanSelectAll}
                     onDeselectAll={handleSmartCleanDeselectAll}
@@ -426,6 +638,11 @@ export function App() {
           entries={selectedEntries}
           onConfirm={handleConfirmTrash}
           onCancel={() => setReviewOpen(false)}
+          onDone={() => {
+            setReviewOpen(false)
+            setSmartCleanOpen(false)
+            setSelectedPaths(new Map())
+          }}
         />
       )}
 
@@ -435,10 +652,20 @@ export function App() {
             selectedPath={selectedPath}
             scanning={scanning}
             cleanableCount={cleanableCount}
-            onScan={handleScan}
+            scanMode={scanMode}
+            quickScanFolders={quickScanFolders}
+            isPremium={isPremium}
+            onScan={() => handleScan()}
             onCancelScan={cancelScan}
             onChangeFolder={handleChooseFolder}
             onSmartClean={handleSmartClean}
+            onToggleScanMode={(mode) => {
+              setScanMode(mode)
+              if (mode === 'quick' && QUICK_SCAN_PATH) {
+                setSelectedPath(QUICK_SCAN_PATH)
+                handleScan(QUICK_SCAN_PATH)
+              }
+            }}
           />
         </SlideUpBar>
       )}
@@ -449,10 +676,40 @@ export function App() {
           y={contextMenu.y}
           isDir={contextMenu.entry.isDir}
           isSelected={selectedPaths.has(contextMenu.entry.path)}
+          isCritical={isCriticalPath(contextMenu.entry.path)}
           onRevealInFinder={handleRevealInFinder}
           onToggleSelect={handleToggleSelect}
           onInfo={handleInfo}
           onClose={() => setContextMenu(null)}
+        />
+      )}
+
+      {settingsOpen && (
+        <SettingsPanel
+          onClose={() => setSettingsOpen(false)}
+          onDevDepsChange={setShowDevDeps}
+          quickScanFolders={quickScanFolders}
+          onQuickScanFoldersChange={setQuickScanFolders}
+          isPremium={isPremium}
+          license={license}
+          onUpgrade={() => { setSettingsOpen(false); setUpgradeOpen(true) }}
+          onLicense={() => { setSettingsOpen(false); setLicenseOpen(true) }}
+        />
+      )}
+
+      {upgradeOpen && (
+        <UpgradeModal
+          onClose={() => setUpgradeOpen(false)}
+          onActivate={() => { setUpgradeOpen(false); setLicenseOpen(true) }}
+        />
+      )}
+      {licenseOpen && (
+        <LicenseModal
+          license={license}
+          onClose={() => setLicenseOpen(false)}
+          onUpgrade={() => { setLicenseOpen(false); setUpgradeOpen(true) }}
+          onActivate={activate}
+          onDeactivate={deactivate}
         />
       )}
     </div>

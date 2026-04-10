@@ -2,6 +2,8 @@
   "name": "vectra",
   "version": "0.1.0",
   "description": "macOS disk space analyzer",
+  "author": "patovw",
+  "email": "hey@patovw.com",
   "main": "out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
@@ -42,7 +44,8 @@
       "out/**/*"
     ],
     "extraResources": [
-      { "from": "resources/scanner-bin", "to": "scanner-bin" }
+      { "from": "resources/scanner-bin", "to": "scanner-bin" },
+      { "from": "build/icon.png", "to": "icon.png" }
     ],
     "directories": {
       "output": "dist"

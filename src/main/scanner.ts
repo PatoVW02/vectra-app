@@ -73,9 +73,13 @@ function spawnSwift(
   binary: string,
   dirPath: string,
   onEntry: (entry: DiskEntry) => void,
-  onDone: (error?: string) => void
+  onDone: (error?: string) => void,
+  lowPriority = false
 ): () => void {
-  const proc = spawn(binary, [dirPath], {
+  // Wrap with `nice -n 10` in low-priority mode to reduce CPU/IO pressure
+  const cmd = lowPriority ? 'nice' : binary
+  const args = lowPriority ? ['-n', '10', binary, dirPath] : [dirPath]
+  const proc = spawn(cmd, args, {
     stdio: ['ignore', 'pipe', 'ignore']
   })
   let buffer = ''
@@ -113,10 +117,13 @@ function spawnSwift(
 function spawnDuFallback(
   dirPath: string,
   onEntry: (entry: DiskEntry) => void,
-  onDone: (error?: string) => void
+  onDone: (error?: string) => void,
+  lowPriority = false
 ): () => void {
   // Full recursive scan — no depth limit, directories only
-  const proc = spawn('du', ['-k', dirPath], {
+  const cmd = lowPriority ? 'nice' : 'du'
+  const args = lowPriority ? ['-n', '10', 'du', '-k', dirPath] : ['-k', dirPath]
+  const proc = spawn(cmd, args, {
     stdio: ['ignore', 'pipe', 'ignore']
   })
   let buffer = ''
@@ -154,11 +161,13 @@ function spawnDuFallback(
 export function scanDirectoryStreaming(
   dirPath: string,
   onEntry: (entry: DiskEntry) => void,
-  onDone: (error?: string) => void
+  onDone: (error?: string) => void,
+  options?: { lowPriority?: boolean }
 ): () => void {
+  const low = options?.lowPriority ?? false
   const binary = getScannerBinaryPath()
   if (binary) {
-    return spawnSwift(binary, dirPath, onEntry, onDone)
+    return spawnSwift(binary, dirPath, onEntry, onDone, low)
   }
-  return spawnDuFallback(dirPath, onEntry, onDone)
+  return spawnDuFallback(dirPath, onEntry, onDone, low)
 }

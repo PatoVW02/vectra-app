@@ -87,8 +87,26 @@ function squarify(entries: DiskEntry[], rect: Rect): LayoutItem[] {
     adjusted = [cappedFirst, ...rawSizes.slice(1).map((s) => s * scale)]
   }
 
-  const total = adjusted.reduce((a, b) => a + b, 0)
+  // Guarantee every entry is always visible regardless of size difference.
+  //
+  // Squarify lays out items by committing "rows" and then recursing into the
+  // remaining strip. The last item(s) always end up in that leftover strip,
+  // which can be just 3–4 px tall when a dominant item has consumed most of
+  // the canvas. A minimum *area* doesn't help — what matters is the strip
+  // HEIGHT. We fix this by giving every item at least 1/(N × VISIBILITY_FACTOR)
+  // of the adjusted total, so the residual strip is always large enough to
+  // produce a block that passes the render threshold. The constant 1/6 per N
+  // means the floor never exceeds 1/6 of the total (the floor fraction × N
+  // cancels), leaving 83 % of the layout purely proportional.
+  const N = adjusted.length
+  if (N > 1) {
+    const adjTotal = adjusted.reduce((a, b) => a + b, 0)
+    const minValue = adjTotal / (N * 6)
+    adjusted = adjusted.map(v => Math.max(v, minValue))
+  }
+
   const area = rect.w * rect.h
+  const total = adjusted.reduce((a, b) => a + b, 0)
   const values = adjusted.map((v) => (v / total) * area)
 
   const result: LayoutItem[] = []
@@ -262,7 +280,7 @@ interface TreemapViewProps {
 }
 
 function folderDisplayName(path: string): string {
-  if (!path || path === '/') return 'Root'
+  if (!path || path === '/') return 'root'
   return path.split('/').filter(Boolean).pop() ?? path
 }
 
@@ -291,19 +309,21 @@ export function TreemapView({
     return () => ro.disconnect()
   }, [])
 
+  const visibleEntries = useMemo(() => entries.filter(e => e.sizeKB > 0), [entries])
+
   const layout = useMemo(
-    () => squarify(entries, { x: 0, y: 0, w: dims.w, h: dims.h }),
-    [entries, dims]
+    () => squarify(visibleEntries, { x: 0, y: 0, w: dims.w, h: dims.h }),
+    [visibleEntries, dims]
   )
 
-  const maxSizeKB = entries[0]?.sizeKB ?? 1
+  const maxSizeKB = visibleEntries[0]?.sizeKB ?? 1
   const folderName = scanningPath ? folderDisplayName(scanningPath) : undefined
 
   return (
     <div className="flex flex-col w-full h-full overflow-hidden">
 
       {/* Scanning status bar — shown only while scanning AND we already have blocks */}
-      {scanning && entries.length > 0 && (
+      {scanning && visibleEntries.length > 0 && (
         <div className="shrink-0 flex items-center gap-2.5 px-4 py-2 border-b border-white/5 bg-zinc-950">
           <div className="w-3 h-3 shrink-0 rounded-full border border-transparent border-t-blue-500 animate-spin" />
           <span className="text-xs text-zinc-400 flex-1 min-w-0">
@@ -323,7 +343,7 @@ export function TreemapView({
         ref={containerRef}
         className="relative flex-1 min-h-0 overflow-hidden ml-6 mt-6 p-3"
       >
-        {entries.length === 0 ? (
+        {visibleEntries.length === 0 ? (
           scanning ? (
             <ScanningLoader scannedCount={scannedCount} folderName={folderName} />
           ) : error ? (

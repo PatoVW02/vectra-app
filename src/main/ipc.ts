@@ -1,10 +1,13 @@
-import { ipcMain, dialog, shell, net } from 'electron'
+import { ipcMain, dialog, shell, net, Notification, app } from 'electron'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { stat, readdir } from 'node:fs/promises'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { scanDirectoryStreaming } from './scanner'
+import { loadSettings, saveSettings, patchSettings, VectraSettings } from './settings'
+import { rebuildTrayMenu, scheduleBackgroundScan, stopBackgroundScan, runBackgroundScan, updateLastScanPath, setTrayVisibility, testNotification } from './background'
+import { getLicenseInfo, activateLicense, revalidateLicense, deactivateLicense } from './license'
 
 const execFileAsync = promisify(execFile)
 
@@ -29,7 +32,7 @@ function getMacOSPathContext(itemPath: string): string {
   // Build a lookup of path → human description of what it is and its sensitivity.
   // Ordered from most-specific to least-specific so first match wins.
   const knownPaths: Array<{ match: string | RegExp; description: string }> = [
-    // ── Root / top-level ──────────────────────────────────────────────────────
+    // ── root / top-level ──────────────────────────────────────────────────────
     { match: '/', description: 'The root of the macOS file system. Every file on the computer lives inside this directory. Deleting it would make the system completely non-functional.' },
 
     // ── Core system trees ─────────────────────────────────────────────────────
@@ -99,19 +102,23 @@ function getMacOSPathContext(itemPath: string): string {
 }
 
 async function pickOllamaModel(): Promise<string> {
-  // Use a manual timeout instead of AbortSignal.timeout for reliability
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), 5000)
   try {
-    // Use net.fetch (Electron's Chromium network stack) — more reliable in main process
-    const res = await net.fetch('http://localhost:11434/api/tags', {
-      signal: controller.signal
-    })
+    const res = await net.fetch('http://localhost:11434/api/tags', { signal: controller.signal })
     if (!res.ok) throw new Error(`Ollama responded with ${res.status}`)
     const data = (await res.json()) as { models?: { name: string }[] }
     const models = data.models ?? []
     if (models.length === 0) {
       throw new Error('No models installed in Ollama. Run: ollama pull llama3.2')
+    }
+    // Honour user's preferred model if it's installed
+    const { preferredOllamaModel } = loadSettings()
+    if (preferredOllamaModel) {
+      const found = models.find(
+        (m) => m.name === preferredOllamaModel || m.name.startsWith(preferredOllamaModel + ':')
+      )
+      if (found) return found.name
     }
     const preferred = ['llama3.2', 'llama3.1', 'llama3', 'mistral', 'gemma2', 'gemma']
     for (const pref of preferred) {
@@ -129,6 +136,8 @@ async function pickOllamaModel(): Promise<string> {
     clearTimeout(timer)
   }
 }
+
+let pullAbort: AbortController | null = null
 
 // ── App leftover detection ────────────────────────────────────────────────────
 
@@ -180,6 +189,14 @@ const APPLE_APP_NAMES = new Set([
   'vectra',
   // Firebase / Google services
   'firestore',
+  // Developer tools and version managers — never flagged even when not a .app
+  'copilot', 'github', 'github-copilot', 'githubcopilot',
+  'nvm', 'rbenv', 'pyenv', 'asdf', 'mise',
+  'homebrew', 'linuxbrew',
+  'npm', 'yarn', 'pnpm',
+  'rustup', 'cargo',
+  // VS Code and extensions — data is valid as long as VS Code itself is installed
+  'code', 'vscode', 'visual', 'cursor', 'windsurf',
 ])
 
 function addWords(ids: Set<string>, text: string) {
@@ -226,6 +243,28 @@ async function getInstalledAppIdentifiers(): Promise<Set<string>> {
         )
       } catch {
         // directory does not exist
+      }
+    })
+  )
+
+  // Also scan VS Code extensions so their Application Support data is never flagged.
+  // Extension folders are named: {publisher}.{name}-{version}  e.g. github.copilot-1.181.0
+  const vscodeExtDirs = [
+    path.join(home, '.vscode', 'extensions'),
+    path.join(home, '.cursor', 'extensions'),
+    path.join(home, '.windsurf', 'extensions'),
+  ]
+  await Promise.allSettled(
+    vscodeExtDirs.map(async (extDir) => {
+      try {
+        const entries = await readdir(extDir)
+        for (const name of entries) {
+          // Strip the trailing version segment (last -semver) to get publisher.extname
+          const withoutVersion = name.replace(/-\d+\.\d+.*$/, '').toLowerCase()
+          addWords(ids, withoutVersion)
+        }
+      } catch {
+        // directory does not exist or not readable
       }
     })
   )
@@ -313,21 +352,47 @@ async function findLeftoversInDir(
 export function registerIpcHandlers(): void {
   // ── Scanner ──────────────────────────────────────────────────────────────
 
-  ipcMain.on('scan-start', (event, dirPath: string) => {
+  ipcMain.on('scan-start', (event, pathOrPaths: string | string[]) => {
     if (cancelCurrentScan) {
       cancelCurrentScan()
       cancelCurrentScan = null
     }
-    cancelCurrentScan = scanDirectoryStreaming(
-      dirPath,
-      (entry) => {
-        if (!event.sender.isDestroyed()) event.sender.send('scan-entry', entry)
-      },
-      (error) => {
-        if (!event.sender.isDestroyed()) event.sender.send('scan-done', error ?? null)
-        cancelCurrentScan = null
+    const paths = Array.isArray(pathOrPaths) ? [...pathOrPaths] : [pathOrPaths]
+
+    const send = (channel: string, data: unknown) => {
+      if (!event.sender.isDestroyed()) event.sender.send(channel, data)
+    }
+
+    if (paths.length === 1) {
+      // Single path — simple case, no coordination needed
+      cancelCurrentScan = scanDirectoryStreaming(
+        paths[0],
+        (entry) => send('scan-entry', entry),
+        (error) => { cancelCurrentScan = null; send('scan-done', error ?? null) }
+      )
+    } else {
+      // Multiple paths — scan all in parallel so every root populates concurrently
+      // (e.g. ~/Library and ~/Downloads appear in the treemap at the same time).
+      const cancellers: Array<() => void> = []
+      let completed = 0
+      let doneSent = false
+
+      const onDone = (error?: string) => {
+        completed++
+        if (!doneSent && (error || completed === paths.length)) {
+          doneSent = true
+          send('scan-done', error ?? null)
+        }
       }
-    )
+
+      for (const dirPath of paths) {
+        cancellers.push(
+          scanDirectoryStreaming(dirPath, (entry) => send('scan-entry', entry), onDone)
+        )
+      }
+
+      cancelCurrentScan = () => { cancellers.forEach((c) => c()); cancelCurrentScan = null }
+    }
   })
 
   ipcMain.on('scan-cancel', () => {
@@ -497,5 +562,177 @@ Your recommendation MUST be consistent with your explanation. Do not say deletin
       ollamaAbort.abort()
       ollamaAbort = null
     }
+  })
+
+  // ── Settings ───────────────────────────────────────────────────────────────
+  ipcMain.handle('get-settings', () => loadSettings())
+  ipcMain.handle('get-home-dir', () => os.homedir())
+
+  ipcMain.handle('save-settings', (_event, settings: VectraSettings) => {
+    const prev = loadSettings()
+    saveSettings(settings)
+    if (settings.backgroundScan.enabled !== prev.backgroundScan.enabled ||
+        settings.backgroundScan.intervalHours !== prev.backgroundScan.intervalHours) {
+      if (settings.backgroundScan.enabled) scheduleBackgroundScan()
+      else stopBackgroundScan()
+    }
+    if (settings.showMenuBarIcon !== prev.showMenuBarIcon) {
+      setTrayVisibility(settings.showMenuBarIcon)
+    }
+    rebuildTrayMenu()
+  })
+
+  ipcMain.handle('test-notification', () => testNotification())
+
+  ipcMain.handle('request-notification-permission', () => {
+    // Showing a notification triggers the native macOS permission dialog on production builds.
+    // If already authorized the notification simply appears; if denied the user sees nothing
+    // and can fall back to opening System Settings manually.
+    if (Notification.isSupported()) {
+      new Notification({
+        title: 'Vectra',
+        body: "You'll be notified when background scans find space to reclaim."
+      }).show()
+    }
+  })
+
+  ipcMain.handle('mark-onboarding-complete', () => {
+    patchSettings({ onboardingComplete: true })
+  })
+
+  ipcMain.handle('get-login-item', () => {
+    return app.getLoginItemSettings().openAtLogin
+  })
+
+  ipcMain.handle('set-login-item', (_event, enable: boolean) => {
+    app.setLoginItemSettings({ openAtLogin: enable, openAsHidden: enable })
+  })
+
+  ipcMain.handle('check-ollama', async () => {
+    try {
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), 3000)
+      const res = await net.fetch('http://localhost:11434/api/tags', { signal: controller.signal })
+      clearTimeout(timer)
+      if (!res.ok) return { installed: false }
+      const data = await res.json() as { models?: { name: string }[] }
+      return { installed: true, hasModels: (data.models?.length ?? 0) > 0 }
+    } catch {
+      return { installed: false }
+    }
+  })
+
+  ipcMain.handle('get-ollama-models', async () => {
+    try {
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), 4000)
+      const res = await net.fetch('http://localhost:11434/api/tags', { signal: controller.signal })
+      clearTimeout(timer)
+      if (!res.ok) return { ok: false, models: [] }
+      const data = await res.json() as {
+        models?: Array<{ name: string; size: number; modified_at: string }>
+      }
+      return { ok: true, models: data.models ?? [] }
+    } catch {
+      return { ok: false, models: [] }
+    }
+  })
+
+  ipcMain.on('pull-model', async (event, modelName: string) => {
+    if (pullAbort) { pullAbort.abort(); pullAbort = null }
+    pullAbort = new AbortController()
+
+    const send = (channel: string, data: unknown) => {
+      if (!event.sender.isDestroyed()) event.sender.send(channel, data)
+    }
+
+    const layerProgress = new Map<string, { total: number; completed: number }>()
+
+    try {
+      const res = await net.fetch('http://localhost:11434/api/pull', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: modelName, stream: true }),
+        signal: pullAbort.signal
+      })
+
+      if (!res.ok || !res.body) {
+        send('pull-done', { model: modelName, error: `Ollama returned ${res.status}` })
+        return
+      }
+
+      const reader = res.body.getReader()
+      const dec = new TextDecoder()
+      let buf = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buf += dec.decode(value, { stream: true })
+        const lines = buf.split('\n')
+        buf = lines.pop() ?? ''
+        for (const line of lines) {
+          if (!line.trim()) continue
+          try {
+            const obj = JSON.parse(line) as {
+              status?: string; digest?: string; total?: number; completed?: number
+            }
+            if (obj.digest && obj.total) {
+              layerProgress.set(obj.digest, { total: obj.total, completed: obj.completed ?? 0 })
+            }
+            const totalBytes = [...layerProgress.values()].reduce((s, v) => s + v.total, 0)
+            const completedBytes = [...layerProgress.values()].reduce((s, v) => s + v.completed, 0)
+            const progress = totalBytes > 0 ? Math.round((completedBytes / totalBytes) * 100) : null
+            send('pull-progress', { model: modelName, progress, status: obj.status ?? '' })
+            if (obj.status === 'success') {
+              send('pull-done', { model: modelName, error: null })
+              return
+            }
+          } catch { /* malformed line */ }
+        }
+      }
+      send('pull-done', { model: modelName, error: null })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (!msg.includes('abort') && !msg.includes('AbortError')) {
+        send('pull-done', { model: modelName, error: msg })
+      }
+    } finally {
+      pullAbort = null
+    }
+  })
+
+  ipcMain.on('cancel-pull', () => {
+    if (pullAbort) { pullAbort.abort(); pullAbort = null }
+  })
+
+  // ── License ────────────────────────────────────────────────────────────────
+  ipcMain.handle('license:get', () => getLicenseInfo())
+  ipcMain.handle('license:activate', (_event, key: string) => activateLicense(key))
+  ipcMain.handle('license:deactivate', () => deactivateLicense())
+
+  // Silently re-validate on startup — updates cached status without blocking
+  revalidateLicense().catch(() => {})
+
+  ipcMain.handle('run-bg-scan', () => runBackgroundScan())
+
+  ipcMain.on('update-last-scan-path', (_event, scanPath: string) => {
+    updateLastScanPath(scanPath)
+  })
+
+  ipcMain.on('notify-manual-scan-done', (_event, foundKB: number) => {
+    patchSettings({
+      lastManualScanTime: Date.now(),
+      lastManualScanFoundKB: foundKB,
+      // Reset cleaned state so tray shows "Found" for the new scan
+      lastCleanedTime: null,
+      lastCleanedKB: 0
+    })
+    rebuildTrayMenu()
+  })
+
+  ipcMain.on('notify-cleaned', (_event, cleanedKB: number) => {
+    patchSettings({ lastCleanedTime: Date.now(), lastCleanedKB: cleanedKB })
+    rebuildTrayMenu()
   })
 }

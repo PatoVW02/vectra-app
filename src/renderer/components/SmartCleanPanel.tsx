@@ -1,12 +1,14 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
+import { useState, useEffect, useMemo, useRef, useCallback, memo, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { DiskEntry, AppLeftover } from '../types'
+import { isCleanable, isDevDependency } from '../utils/cleanable'
 import { formatSize } from '../utils/format'
 import { buildCleanableTree, TreeNode } from '../utils/buildTree'
 import { isCriticalPath } from '../utils/criticalPaths'
 
 interface SmartCleanPanelProps {
   allCleanable: Map<string, DiskEntry>
+  fullTree: Map<string, DiskEntry[]>
   selectedPaths: Set<string>
   rootPath: string
   onToggle: (path: string, entry: DiskEntry) => void
@@ -118,6 +120,51 @@ function ItemCtxMenu({ x, y, canSelect, isSelected, onToggle, onInfo, onReveal, 
   )
 }
 
+// ─── Section block ────────────────────────────────────────────────────────────
+
+interface SectionBlockProps {
+  title: string
+  collapsed: boolean
+  onToggleCollapse: () => void
+  selectLabel?: string
+  onSelect?: () => void
+  children: ReactNode
+}
+
+function SectionBlock({ title, collapsed, onToggleCollapse, selectLabel, onSelect, children }: SectionBlockProps) {
+  return (
+    <div>
+      <div className="flex items-center gap-1 px-3 pt-3 pb-1">
+        {/* Collapse / expand chevron */}
+        <button
+          onClick={onToggleCollapse}
+          className="flex items-center gap-1.5 flex-1 min-w-0 group"
+        >
+          <svg
+            className={['w-2.5 h-2.5 text-zinc-600 group-hover:text-zinc-400 shrink-0 transition-transform duration-150', collapsed ? '' : 'rotate-90'].join(' ')}
+            fill="currentColor" viewBox="0 0 20 20"
+          >
+            <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
+          </svg>
+          <span className="text-[10px] font-semibold text-zinc-600 group-hover:text-zinc-400 uppercase tracking-widest transition-colors truncate">
+            {title}
+          </span>
+        </button>
+        {/* Select / deselect shortcut */}
+        {onSelect && selectLabel && !collapsed && (
+          <button
+            onClick={onSelect}
+            className="text-[10px] text-blue-500 hover:text-blue-400 transition-colors shrink-0"
+          >
+            {selectLabel}
+          </button>
+        )}
+      </div>
+      {!collapsed && children}
+    </div>
+  )
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function getCleanableDescendants(node: TreeNode): Array<{ path: string; entry: DiskEntry }> {
@@ -126,6 +173,7 @@ function getCleanableDescendants(node: TreeNode): Array<{ path: string; entry: D
   for (const child of node.children) result.push(...getCleanableDescendants(child))
   return result
 }
+
 
 // ─── Tree item (scan-tree section) ────────────────────────────────────────────
 
@@ -136,23 +184,44 @@ interface TreeItemProps {
   onToggle: (path: string, entry: DiskEntry) => void
   onInfo: (entry: DiskEntry) => void
   onRevealInFinder: (path: string) => void
+  /** True when an ancestor cleanable node is already selected — this node is implicitly covered. */
+  parentSelected?: boolean
 }
 
-function TreeItem({ node, depth, selectedPaths, onToggle, onInfo, onRevealInFinder }: TreeItemProps) {
-  const [expanded, setExpanded] = useState(true)
+const TreeItem = memo(function TreeItem({ node, depth, selectedPaths, onToggle, onInfo, onRevealInFinder, parentSelected }: TreeItemProps) {
+  const [expanded, setExpanded] = useState(depth === 0 && node.children.length <= 8)
   const [ctx, setCtx] = useState<{ x: number; y: number } | null>(null)
 
   const hasChildren = node.children.length > 0
   const isDir = node.entry ? node.entry.isDir : true  // intermediate nodes are always dirs
-  const checked = node.isCleanable && node.entry ? selectedPaths.has(node.path) : false
 
-  // For non-cleanable intermediate nodes: batch select/deselect their descendants
-  const cleanableDescendants = !node.isCleanable && hasChildren
-    ? getCleanableDescendants(node)
-    : null
-  const allDescendantsSelected = cleanableDescendants !== null
+  // directlyChecked: this node is explicitly in selectedPaths
+  // checked: also true when an ancestor is selected (parent covers this node for deletion)
+  const directlyChecked = node.isCleanable && !!node.entry && selectedPaths.has(node.path)
+  const checked = directlyChecked || (parentSelected ?? false)
+
+  // Cleanable descendants for all nodes with children — used for cascading selection.
+  // Memoized so the recursive walk doesn't re-run on every render.
+  const cleanableDescendants = useMemo(
+    () => (hasChildren ? getCleanableDescendants(node) : null),
+    // node.children identity is stable from buildCleanableTree
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [node]
+  )
+
+  // For intermediate (non-cleanable) nodes: are ALL descendants selected?
+  const allDescendantsSelected = !node.isCleanable
+    && cleanableDescendants !== null
     && cleanableDescendants.length > 0
     && cleanableDescendants.every((d) => selectedPaths.has(d.path))
+
+  // A cleanable node is "fully selected" when it itself is checked (directly or implied).
+  // Selecting the parent already covers all children, so we don't require children to be
+  // individually in selectedPaths — just show the full checkmark.
+  const allSelfAndDescendantsSelected = node.isCleanable && checked
+
+  const someSelfOrDescendantsSelected = node.isCleanable
+    && (checked || (cleanableDescendants?.some(d => selectedPaths.has(d.path)) ?? false))
 
   const batchToggle = useCallback(() => {
     if (!cleanableDescendants) return
@@ -166,6 +235,21 @@ function TreeItem({ node, depth, selectedPaths, onToggle, onInfo, onRevealInFind
       }
     }
   }, [cleanableDescendants, allDescendantsSelected, selectedPaths, onToggle])
+
+  // Toggle a cleanable node that has visible children: cascade to all descendants too.
+  const handleCleanableToggle = useCallback(() => {
+    if (!node.entry) return
+    const selecting = !allSelfAndDescendantsSelected
+    // Toggle self based on directly-checked state (not the inherited parentSelected state)
+    if (selecting !== directlyChecked) onToggle(node.path, node.entry)
+    // Cascade to descendants — skip self (getCleanableDescendants includes the node itself)
+    if (cleanableDescendants && cleanableDescendants.length > 0) {
+      for (const d of cleanableDescendants) {
+        if (d.path === node.path) continue  // self handled above; avoid double-toggle
+        if (selecting !== selectedPaths.has(d.path)) onToggle(d.path, d.entry)
+      }
+    }
+  }, [node, directlyChecked, allSelfAndDescendantsSelected, cleanableDescendants, selectedPaths, onToggle])
 
   const handleBatchToggle = useCallback((e: React.MouseEvent) => {
     e.stopPropagation()
@@ -201,15 +285,24 @@ function TreeItem({ node, depth, selectedPaths, onToggle, onInfo, onRevealInFind
         {/* Checkbox — cleanable leaf OR batch-select for intermediate nodes */}
         {node.isCleanable && node.entry ? (
           <button
-            onClick={() => onToggle(node.path, node.entry!)}
+            onClick={hasChildren ? handleCleanableToggle : () => onToggle(node.path, node.entry!)}
             className={[
               'w-4 h-4 rounded border shrink-0 flex items-center justify-center transition-colors',
-              checked ? 'bg-blue-600 border-blue-600' : 'border-zinc-600 bg-transparent'
+              allSelfAndDescendantsSelected
+                ? 'bg-blue-600 border-blue-600'
+                : someSelfOrDescendantsSelected
+                ? 'bg-blue-900/60 border-blue-500'
+                : 'border-zinc-600 bg-transparent'
             ].join(' ')}
           >
-            {checked && (
+            {allSelfAndDescendantsSelected && (
               <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+              </svg>
+            )}
+            {!allSelfAndDescendantsSelected && someSelfOrDescendantsSelected && (
+              <svg className="w-2.5 h-2.5 text-blue-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 12h14" />
               </svg>
             )}
           </button>
@@ -248,7 +341,11 @@ function TreeItem({ node, depth, selectedPaths, onToggle, onInfo, onRevealInFind
 
         {/* Label + size */}
         <button
-          onClick={() => node.isCleanable && node.entry && onToggle(node.path, node.entry)}
+          onClick={() => {
+            if (!node.isCleanable || !node.entry) return
+            if (hasChildren) handleCleanableToggle()
+            else onToggle(node.path, node.entry)
+          }}
           className="flex-1 min-w-0 flex items-center justify-between gap-1 text-left min-w-0"
         >
           <span className={[
@@ -273,15 +370,16 @@ function TreeItem({ node, depth, selectedPaths, onToggle, onInfo, onRevealInFind
           onToggle={onToggle}
           onInfo={onInfo}
           onRevealInFinder={onRevealInFinder}
+          parentSelected={checked || undefined}
         />
       ))}
 
       {ctx && (() => {
         const hasCleanableContent = (node.isCleanable && !!node.entry) ||
           (cleanableDescendants !== null && cleanableDescendants.length > 0)
-        const ctxIsSelected = node.isCleanable ? checked : allDescendantsSelected
+        const ctxIsSelected = node.isCleanable ? allSelfAndDescendantsSelected : allDescendantsSelected
         const ctxToggle = node.isCleanable && node.entry
-          ? () => onToggle(node.path, node.entry!)
+          ? (hasChildren ? handleCleanableToggle : () => onToggle(node.path, node.entry!))
           : batchToggle
         return (
           <ItemCtxMenu
@@ -298,7 +396,7 @@ function TreeItem({ node, depth, selectedPaths, onToggle, onInfo, onRevealInFind
       })()}
     </>
   )
-}
+})
 
 // ─── Leftover row ─────────────────────────────────────────────────────────────
 
@@ -373,6 +471,7 @@ function LeftoverRow({ item, checked, onToggle, onReveal, onInfo }: LeftoverRowP
 
 export function SmartCleanPanel({
   allCleanable,
+  fullTree,
   selectedPaths,
   rootPath,
   onToggle,
@@ -385,6 +484,11 @@ export function SmartCleanPanel({
   onClose
 }: SmartCleanPanelProps) {
   const [mounted, setMounted] = useState(false)
+
+  // Section collapse state
+  const [cachesCollapsed, setCachesCollapsed] = useState(false)
+  const [devCollapsed, setDevCollapsed] = useState(false)
+  const [leftoversCollapsed, setLeftoversCollapsed] = useState(false)
 
   // App leftovers
   const [leftovers, setLeftovers] = useState<AppLeftover[]>([])
@@ -406,8 +510,8 @@ export function SmartCleanPanel({
       .then((items) => {
         setLeftovers(items)
         if (initialLeftoverSelection === null) {
-          // First open this session — select everything
-          setSelectedLeftovers(new Set(items.map((i) => i.path)))
+          // First open this session — start with nothing selected (user opts in)
+          setSelectedLeftovers(new Set())
         } else {
           // Restore previous selection, keeping only paths that still exist
           const existing = new Set(items.map((i) => i.path))
@@ -419,22 +523,107 @@ export function SmartCleanPanel({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []) // intentionally run once on mount; initialLeftoverSelection captured at open time
 
-  const allEntries = useMemo(() => [...allCleanable.values()].filter((e) => e.sizeKB > 0), [allCleanable])
+  // Fast path lookup from fullTree — used to resolve manually-selected entries
+  const entryByPath = useMemo(() => {
+    const m = new Map<string, DiskEntry>()
+    for (const children of fullTree.values()) {
+      for (const e of children) m.set(e.path, e)
+    }
+    return m
+  }, [fullTree])
 
-  const tree = useMemo(
-    () => buildCleanableTree(allEntries, rootPath),
-    [allEntries, rootPath]
+  // Split cleanable entries into system (Caches, Logs, …) and dev (node_modules, venv, …).
+  // We build two completely separate trees so intermediate ancestor nodes never mix
+  // system and dev content — which would cause everything to collapse into one section.
+  const systemEntries = useMemo(
+    () => [...allCleanable.values()].filter(e => e.sizeKB > 0 && !isDevDependency(e)),
+    [allCleanable]
+  )
+  const devEntries = useMemo(() => {
+    const fromCleanable = [...allCleanable.values()].filter(e => e.sizeKB > 0 && isDevDependency(e))
+    // Also include dev deps that were manually selected from the treemap but aren't in allCleanable
+    // (this happens when the "show dev dependencies" setting is off)
+    const seen = new Set(fromCleanable.map(e => e.path))
+    const extra: DiskEntry[] = []
+    for (const path of selectedPaths) {
+      if (seen.has(path)) continue
+      const entry = entryByPath.get(path)
+      if (entry && entry.sizeKB > 0 && isDevDependency(entry)) {
+        extra.push(entry)
+        seen.add(path)
+      }
+    }
+    return [...fromCleanable, ...extra]
+  }, [allCleanable, selectedPaths, entryByPath])
+
+  // Direct children of system cleanable dirs — individually selectable sub-items.
+  const { systemChildEntries, systemChildPaths } = useMemo(() => {
+    const extra: DiskEntry[] = []
+    const extraPaths = new Set<string>()
+    for (const entry of systemEntries) {
+      if (!entry.isDir) continue
+      for (const child of fullTree.get(entry.path) ?? []) {
+        if (!allCleanable.has(child.path) && child.sizeKB > 0) {
+          extra.push(child)
+          extraPaths.add(child.path)
+        }
+      }
+    }
+    return { systemChildEntries: extra, systemChildPaths: extraPaths }
+  }, [systemEntries, fullTree, allCleanable])
+
+  // Dev dep entries aren't recognised by isCleanable() so pass their paths explicitly.
+  const devSelectablePaths = useMemo(
+    () => new Set(devEntries.map(e => e.path)),
+    [devEntries]
   )
 
-  const selectedScanItems = allEntries.filter((e) => selectedPaths.has(e.path))
-  const selectedLeftoverItems = leftovers.filter((l) => selectedLeftovers.has(l.path))
-  const totalSelectedKB =
-    selectedScanItems.reduce((s, e) => s + e.sizeKB, 0) +
-    selectedLeftoverItems.reduce((s, l) => s + l.sizeKB, 0)
-  const totalSelectedCount = selectedScanItems.length + selectedLeftoverItems.length
+  // System entries that aren't flagged by isCleanable() (e.g. Downloads files/folders)
+  // must be included in selectablePaths so buildCleanableTree marks them as selectable.
+  const systemSelectablePaths = useMemo(() => {
+    const paths = new Set<string>(systemChildPaths)
+    for (const e of systemEntries) {
+      if (!isCleanable(e)) paths.add(e.path)
+    }
+    return paths
+  }, [systemEntries, systemChildPaths])
 
-  const allScanSelected = allEntries.length > 0 && allEntries.every((e) => selectedPaths.has(e.path))
-  const allLeftoversSelected = leftovers.length > 0 && leftovers.every((l) => selectedLeftovers.has(l.path))
+  // One tree per section — no shared ancestors that could merge the two groups.
+  const systemTree = useMemo(
+    () => buildCleanableTree([...systemEntries, ...systemChildEntries], rootPath, systemSelectablePaths),
+    [systemEntries, systemChildEntries, rootPath, systemSelectablePaths]
+  )
+  const devTree = useMemo(
+    () => buildCleanableTree(devEntries, rootPath, devSelectablePaths),
+    [devEntries, rootPath, devSelectablePaths]
+  )
+
+  // All entries for selection counting
+  const allEntries = useMemo(
+    () => [...systemEntries, ...devEntries],
+    [systemEntries, devEntries]
+  )
+  const treeEntries = useMemo(
+    () => [...systemEntries, ...systemChildEntries, ...devEntries],
+    [systemEntries, systemChildEntries, devEntries]
+  )
+
+  const { totalSelectedKB, totalSelectedCount } = useMemo(() => {
+    let kb = 0, count = 0
+    for (const e of treeEntries) { if (selectedPaths.has(e.path)) { kb += e.sizeKB; count++ } }
+    for (const l of leftovers)   { if (selectedLeftovers.has(l.path)) { kb += l.sizeKB; count++ } }
+    return { totalSelectedKB: kb, totalSelectedCount: count }
+  }, [treeEntries, selectedPaths, leftovers, selectedLeftovers])
+
+  // "Select all" tracks only top-level cleanable entries — children are opt-in
+  const allScanSelected = useMemo(
+    () => allEntries.length > 0 && allEntries.every((e) => selectedPaths.has(e.path)),
+    [allEntries, selectedPaths]
+  )
+  const allLeftoversSelected = useMemo(
+    () => leftovers.length > 0 && leftovers.every((l) => selectedLeftovers.has(l.path)),
+    [leftovers, selectedLeftovers]
+  )
 
   const toggleLeftover = useCallback((path: string) => {
     setSelectedLeftovers((prev) => {
@@ -447,6 +636,7 @@ export function SmartCleanPanel({
 
   const handleAddToSelection = useCallback(() => {
     // Scan items are already in selectedPaths via onToggle — just add leftovers
+    const selectedLeftoverItems = leftovers.filter((l) => selectedLeftovers.has(l.path))
     if (selectedLeftoverItems.length > 0) {
       const entries: DiskEntry[] = selectedLeftoverItems.map((l) => ({
         name: l.name,
@@ -457,7 +647,7 @@ export function SmartCleanPanel({
       onAddLeftoversToSelection(entries)
     }
     onClose(selectedLeftovers)
-  }, [selectedLeftoverItems, selectedLeftovers, onAddLeftoversToSelection, onClose])
+  }, [leftovers, selectedLeftovers, onAddLeftoversToSelection, onClose])
 
   return (
     <div
@@ -508,23 +698,18 @@ export function SmartCleanPanel({
       </div>
 
       {/* Scrollable body */}
-      <div className="flex-1 overflow-y-auto min-h-0">
+      <div className="scrollbar-dark flex-1 overflow-y-auto min-h-0">
 
-        {/* ── Scan-tree section ── */}
-        {tree.length > 0 && (
-          <div>
-            <div className="flex items-center justify-between px-3 pt-3 pb-1">
-              <span className="text-[10px] font-semibold text-zinc-600 uppercase tracking-widest">
-                Caches &amp; Temp
-              </span>
-              <button
-                onClick={allScanSelected ? onDeselectAll : onSelectAll}
-                className="text-[10px] text-blue-500 hover:text-blue-400 transition-colors"
-              >
-                {allScanSelected ? 'Deselect' : 'Select all'}
-              </button>
-            </div>
-            {tree.map((node) => (
+        {/* ── Caches & Temp ── */}
+        {systemTree.length > 0 && (
+          <SectionBlock
+            title="Caches & Temp"
+            collapsed={cachesCollapsed}
+            onToggleCollapse={() => setCachesCollapsed(v => !v)}
+            selectLabel={allScanSelected ? 'Deselect' : 'Select all'}
+            onSelect={allScanSelected ? onDeselectAll : onSelectAll}
+          >
+            {systemTree.map((node) => (
               <TreeItem
                 key={node.path}
                 node={node}
@@ -535,28 +720,41 @@ export function SmartCleanPanel({
                 onRevealInFinder={onRevealInFinder}
               />
             ))}
-          </div>
+          </SectionBlock>
         )}
 
-        {/* ── App leftovers section ── */}
-        <div>
-          <div className="flex items-center justify-between px-3 pt-3 pb-1">
-            <span className="text-[10px] font-semibold text-zinc-600 uppercase tracking-widest">
-              App Leftovers
-            </span>
-            {!leftoversLoading && leftovers.length > 0 && (
-              <button
-                onClick={() => {
-                  if (allLeftoversSelected) setSelectedLeftovers(new Set())
-                  else setSelectedLeftovers(new Set(leftovers.map((l) => l.path)))
-                }}
-                className="text-[10px] text-blue-500 hover:text-blue-400 transition-colors"
-              >
-                {allLeftoversSelected ? 'Deselect' : 'Select all'}
-              </button>
-            )}
-          </div>
+        {/* ── Dev Dependencies ── */}
+        {devTree.length > 0 && (
+          <SectionBlock
+            title="Dev Dependencies"
+            collapsed={devCollapsed}
+            onToggleCollapse={() => setDevCollapsed(v => !v)}
+          >
+            {devTree.map((node) => (
+              <TreeItem
+                key={node.path}
+                node={node}
+                depth={0}
+                selectedPaths={selectedPaths}
+                onToggle={onToggle}
+                onInfo={onInfo}
+                onRevealInFinder={onRevealInFinder}
+              />
+            ))}
+          </SectionBlock>
+        )}
 
+        {/* ── App Leftovers ── */}
+        <SectionBlock
+          title="App Leftovers"
+          collapsed={leftoversCollapsed}
+          onToggleCollapse={() => setLeftoversCollapsed(v => !v)}
+          selectLabel={!leftoversLoading && leftovers.length > 0 ? (allLeftoversSelected ? 'Deselect' : 'Select all') : undefined}
+          onSelect={!leftoversLoading && leftovers.length > 0 ? () => {
+            if (allLeftoversSelected) setSelectedLeftovers(new Set())
+            else setSelectedLeftovers(new Set(leftovers.map((l) => l.path)))
+          } : undefined}
+        >
           {leftoversLoading ? (
             <div className="flex items-center gap-2 px-3 py-3 text-xs text-zinc-600">
               <div className="w-3 h-3 rounded-full border border-transparent border-t-zinc-500 animate-spin shrink-0" />
@@ -578,9 +776,9 @@ export function SmartCleanPanel({
               />
             ))
           )}
-        </div>
+        </SectionBlock>
 
-        {tree.length === 0 && !leftoversLoading && leftovers.length === 0 && (
+        {systemTree.length === 0 && devTree.length === 0 && !leftoversLoading && leftovers.length === 0 && (
           <div className="flex items-center justify-center h-24 text-xs text-zinc-600 px-4 text-center">
             Nothing to clean up.
           </div>

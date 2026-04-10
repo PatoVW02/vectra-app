@@ -31,7 +31,7 @@ export function FileList({ entries, scanning, scannedCount, error, onNavigate }:
   const maxSizeKB = entries[0]?.sizeKB ?? 1
 
   return (
-    <div className="overflow-y-auto h-full px-2 py-2 flex flex-col">
+    <div className="scrollbar-dark overflow-y-auto h-full px-2 py-2 flex flex-col">
       <div className="flex-1">
         {entries.map((entry) => (
           <FileRow

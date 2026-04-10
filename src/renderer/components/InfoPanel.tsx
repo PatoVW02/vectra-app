@@ -57,11 +57,13 @@ function Row({ label, value, mono = false }: { label: string; value: string; mon
 interface InfoPanelProps {
   entry: DiskEntry
   isSelected: boolean
+  isPremium: boolean
   onClose: () => void
   onToggleSelect: (entry: DiskEntry) => void
+  onUpgrade: () => void
 }
 
-export function InfoPanel({ entry, isSelected, onClose, onToggleSelect }: InfoPanelProps) {
+export function InfoPanel({ entry, isSelected, isPremium, onClose, onToggleSelect, onUpgrade }: InfoPanelProps) {
   const [mounted, setMounted] = useState(false)
   const [stats, setStats] = useState<ItemStats | null>(null)
   const [statsError, setStatsError] = useState(false)
@@ -95,6 +97,9 @@ export function InfoPanel({ entry, isSelected, onClose, onToggleSelect }: InfoPa
       else setStats(result)
     }).catch(() => setStatsError(true))
 
+    // AI analysis is a premium feature — skip entirely for free users
+    if (!isPremium) return
+
     window.electronAPI.removeOllamaListeners()
     window.electronAPI.onOllamaModel((m) => setModel(m))
     window.electronAPI.onOllamaToken((token) => setAnalysis((prev) => prev + token))
@@ -113,7 +118,7 @@ export function InfoPanel({ entry, isSelected, onClose, onToggleSelect }: InfoPa
       window.electronAPI.cancelOllamaAnalysis()
       window.electronAPI.removeOllamaListeners()
     }
-  }, [entry])
+  }, [entry, isPremium])
 
   const upper = analysis.toUpperCase()
   const recommendation: 'KEEP' | 'DELETE' | null = upper.includes('RECOMMENDATION: DELETE')
@@ -156,7 +161,7 @@ export function InfoPanel({ entry, isSelected, onClose, onToggleSelect }: InfoPa
       </div>
 
       {/* Scrollable body */}
-      <div className="flex-1 overflow-y-auto min-h-0 px-4 py-3 flex flex-col gap-4">
+      <div className="scrollbar-dark flex-1 overflow-y-auto min-h-0 px-4 py-3 flex flex-col gap-4">
 
         {/* Details */}
         <section>
@@ -183,7 +188,30 @@ export function InfoPanel({ entry, isSelected, onClose, onToggleSelect }: InfoPa
         </section>
 
         {/* AI Analysis */}
-        {aiHidden ? (
+        {!isPremium ? (
+          <section className="flex flex-col gap-2">
+            <div className="flex items-center gap-1.5">
+              <svg className="w-3 h-3 text-violet-400/40 shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M5 2a1 1 0 011 1v1h1a1 1 0 010 2H6v1a1 1 0 01-2 0V6H3a1 1 0 010-2h1V3a1 1 0 011-1zm0 10a1 1 0 011 1v1h1a1 1 0 110 2H6v1a1 1 0 11-2 0v-1H3a1 1 0 110-2h1v-1a1 1 0 011-1zM12 2a1 1 0 01.967.744L14.146 7.2 17.5 9.134a1 1 0 010 1.732l-3.354 1.935-1.18 4.455a1 1 0 01-1.933 0L9.854 12.8 6.5 10.866a1 1 0 010-1.732l3.354-1.935 1.18-4.455A1 1 0 0112 2z" clipRule="evenodd" />
+              </svg>
+              <h3 className="text-[10px] font-semibold text-zinc-700 uppercase tracking-widest">AI Analysis</h3>
+            </div>
+            <div className="rounded-lg bg-white/[0.03] border border-white/[0.05] px-3 py-5 flex flex-col items-center gap-2">
+              <svg className="w-4 h-4 text-zinc-600" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
+              </svg>
+              <p className="text-[11px] text-zinc-500 text-center leading-snug">
+                AI analysis is a Premium feature
+              </p>
+              <button
+                onClick={onUpgrade}
+                className="text-[11px] text-blue-400 hover:text-blue-300 transition-colors"
+              >
+                Upgrade to unlock →
+              </button>
+            </div>
+          </section>
+        ) : aiHidden ? (
           <div className="flex items-center gap-1.5">
             <span className="text-[10px] text-zinc-700">AI analysis hidden</span>
             <button

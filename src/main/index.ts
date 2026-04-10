@@ -2,9 +2,13 @@ import { app, shell, BrowserWindow } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { registerIpcHandlers } from './ipc'
+import { initTray, scheduleBackgroundScan, isQuitting } from './background'
+import { loadSettings } from './settings'
+
+let mainWindow: BrowserWindow | null = null
 
 function createWindow(): void {
-  const mainWindow = new BrowserWindow({
+  mainWindow = new BrowserWindow({
     width: 960,
     height: 680,
     minWidth: 700,
@@ -18,12 +22,22 @@ function createWindow(): void {
     }
   })
 
-  mainWindow.on('ready-to-show', () => {
-    mainWindow.show()
+  mainWindow.on('ready-to-show', () => mainWindow!.show())
+
+  // Hide to tray instead of closing when background scan is enabled,
+  // but let the close through when the user explicitly chose Quit.
+  mainWindow.on('close', (e) => {
+    if (!isQuitting() && loadSettings().backgroundScan.enabled) {
+      e.preventDefault()
+      mainWindow?.hide()
+      app.dock?.hide()
+    }
   })
 
-  mainWindow.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url)
+  mainWindow.on('show', () => app.dock?.show())
+
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    shell.openExternal(url)
     return { action: 'deny' }
   })
 
@@ -37,22 +51,24 @@ function createWindow(): void {
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.patricio.vectra')
 
-  app.on('browser-window-created', (_, window) => {
-    optimizer.watchWindowShortcuts(window)
-  })
+  app.on('browser-window-created', (_, w) => optimizer.watchWindowShortcuts(w))
 
   registerIpcHandlers()
   createWindow()
+  initTray(() => mainWindow)
+
+  if (loadSettings().backgroundScan.enabled) {
+    scheduleBackgroundScan()
+  }
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow()
-    }
+    if (mainWindow) { mainWindow.show(); mainWindow.focus() }
+    else createWindow()
   })
 })
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit()
-  }
+  if (process.platform !== 'darwin') app.quit()
 })
+
+

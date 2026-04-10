@@ -30,10 +30,13 @@ function insertSorted(arr: DiskEntry[], entry: DiskEntry): void {
   arr.splice(lo, 0, entry)
 }
 
-export function useTreeScanner(rootPath: string | null, scanTrigger: number): TreeScanState {
+export function useTreeScanner(rootPath: string | null, scanTrigger: number, scanPaths?: string[] | null): TreeScanState {
   const internalTree = useRef<TreeMap>(new Map())
   const pendingCount = useRef(0)
   const batchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Keep a ref so the effect always uses the latest scanPaths without adding it to deps
+  const scanPathsRef = useRef<string[] | null>(scanPaths ?? null)
+  scanPathsRef.current = scanPaths ?? null
 
   const [state, setState] = useState<Omit<TreeScanState, 'removeEntries'>>({
     tree: new Map(),
@@ -128,7 +131,11 @@ export function useTreeScanner(rootPath: string | null, scanTrigger: number): Tr
       flushBatch(true)
     })
 
-    window.electronAPI.startScan(rootPath)
+    window.electronAPI.startScan(
+      scanPathsRef.current && scanPathsRef.current.length > 0
+        ? scanPathsRef.current
+        : rootPath
+    )
 
     return () => {
       if (batchTimer.current) clearTimeout(batchTimer.current)

@@ -12,7 +12,12 @@ export interface TreeNode {
 
 // Build a compressed trie of cleanable directories from a flat list of DiskEntries.
 // Non-cleanable single-child intermediate nodes are collapsed into a combined label.
-export function buildCleanableTree(entries: DiskEntry[], rootPath: string): TreeNode[] {
+// selectablePaths: additional paths that should be treated as selectable (e.g. children of cleanable dirs).
+export function buildCleanableTree(
+  entries: DiskEntry[],
+  rootPath: string,
+  selectablePaths?: Set<string>
+): TreeNode[] {
   // Normalize root: '' for '/', otherwise no trailing slash
   const root = rootPath === '/' ? '' : rootPath.replace(/\/$/, '')
 
@@ -22,7 +27,7 @@ export function buildCleanableTree(entries: DiskEntry[], rootPath: string): Tree
 
   // Collect all cleanable paths
   const cleanablePaths = entries.filter(isCleanable).map((e) => e.path)
-  if (cleanablePaths.length === 0) return []
+  if (cleanablePaths.length === 0 && (!selectablePaths || selectablePaths.size === 0)) return []
 
   // Build a minimal trie: node = { children: Map<segment, node>, entry }
   interface TrieNode {
@@ -34,15 +39,19 @@ export function buildCleanableTree(entries: DiskEntry[], rootPath: string): Tree
   const trieRoot: TrieNode = { children: new Map(), entry: undefined, path: root || '/' }
 
   for (const entry of entries) {
-    const rel = entry.path.startsWith(root + '/')
+    const underRoot = root !== '' && entry.path.startsWith(root + '/')
+    const rel = underRoot
       ? entry.path.slice(root.length + 1)
       : entry.path.startsWith('/')
-      ? entry.path.slice(1)
+      ? entry.path.slice(1)   // absolute path outside root — build from filesystem root
       : entry.path
     const segments = rel.split('/').filter(Boolean)
 
     let cur = trieRoot
-    let curPath = root
+    // For entries outside rootPath, curPath must start from '' (filesystem root) so that
+    // '/Users/patricio/Downloads/foo' assembles as '/Users', '/Users/patricio', ... etc.
+    // rather than '/rootPath/Users/patricio/Downloads/foo'.
+    let curPath = underRoot ? root : ''
     for (const seg of segments) {
       curPath = curPath + '/' + seg
       if (!cur.children.has(seg)) {
@@ -58,7 +67,9 @@ export function buildCleanableTree(entries: DiskEntry[], rootPath: string): Tree
 
   // Convert trie to TreeNode[], compressing single-child non-cleanable chains
   function convert(node: TrieNode, label: string): TreeNode {
-    const entryIsCleanable = node.entry ? isCleanable(node.entry) : false
+    const entryIsCleanable = node.entry
+      ? (isCleanable(node.entry) || (selectablePaths?.has(node.entry.path) ?? false))
+      : false
     const childNodes = [...node.children.values()]
 
     // Sum totalKB: use entry's sizeKB if available, else sum children
