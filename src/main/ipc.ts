@@ -652,6 +652,7 @@ Your recommendation MUST be consistent with your explanation. Do not say deletin
   ipcMain.handle('get-settings', () => loadSettings())
   ipcMain.handle('get-home-dir', () => os.homedir())
   ipcMain.handle('get-app-version', () => app.getVersion())
+  ipcMain.handle('get-app-arch', () => process.arch)
 
   ipcMain.handle('save-settings', (_event, settings: VectraSettings) => {
     const prev = loadSettings()

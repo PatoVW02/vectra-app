@@ -113,6 +113,7 @@ declare global {
       getSettings: () => Promise<VectraSettings>
       getHomeDir: () => Promise<string>
       getAppVersion: () => Promise<string>
+      getAppArch: () => Promise<string>
       saveSettings: (settings: VectraSettings) => Promise<void>
       runBgScanNow: () => Promise<void>
       updateLastScanPath: (path: string) => void

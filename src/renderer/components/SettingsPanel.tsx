@@ -160,6 +160,7 @@ export function SettingsPanel({ onClose, onDevDepsChange, quickScanFolders, onQu
   const [updateReadyToInstall, setUpdateReadyToInstall] = useState(false)
   const [restartingToInstall, setRestartingToInstall] = useState(false)
   const [appVersion, setAppVersion] = useState<string | null>(null)
+  const [appArch, setAppArch] = useState<string | null>(null)
   const [loginItem, setLoginItem] = useState<boolean | null>(null)
 
   // AI state
@@ -180,6 +181,9 @@ export function SettingsPanel({ onClose, onDevDepsChange, quickScanFolders, onQu
     window.electronAPI.getLoginItem().then(setLoginItem).catch(() => {})
     if (window.electronAPI.getAppVersion) {
       window.electronAPI.getAppVersion().then(setAppVersion).catch(() => {})
+    }
+    if (window.electronAPI.getAppArch) {
+      window.electronAPI.getAppArch().then(setAppArch).catch(() => {})
     }
   }, [])
 
@@ -1029,8 +1033,13 @@ export function SettingsPanel({ onClose, onDevDepsChange, quickScanFolders, onQu
                 </button>
               )}
               {appVersion && (
-                <p className="text-xs text-zinc-600 mt-2">
+                <p className="text-xs text-zinc-600 mt-2 flex items-center gap-2">
                   Current version: {appVersion}
+                  {appArch && (
+                    <span className="px-1.5 py-0.5 rounded text-zinc-500 bg-zinc-800 text-[10px] font-mono tracking-wide">
+                      {appArch === 'arm64' ? 'Apple Silicon' : appArch === 'x64' ? 'Intel' : appArch}
+                    </span>
+                  )}
                 </p>
               )}
             </div>

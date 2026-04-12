@@ -66,6 +66,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getSettings: () => ipcRenderer.invoke('get-settings'),
   getHomeDir: () => ipcRenderer.invoke('get-home-dir') as Promise<string>,
   getAppVersion: () => ipcRenderer.invoke('get-app-version') as Promise<string>,
+  getAppArch: () => ipcRenderer.invoke('get-app-arch') as Promise<string>,
   saveSettings: (settings: unknown) => ipcRenderer.invoke('save-settings', settings),
   runBgScanNow: () => ipcRenderer.invoke('run-bg-scan'),
   updateLastScanPath: (path: string) => ipcRenderer.send('update-last-scan-path', path),
