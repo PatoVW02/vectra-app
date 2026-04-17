@@ -79,6 +79,7 @@ function intervalLabel(hours: number): string {
 
 let tray: Tray | null = null
 let bgTimeout: ReturnType<typeof setTimeout> | null = null
+let trayLabelInterval: ReturnType<typeof setInterval> | null = null
 let scanning = false
 let getMainWin: () => BrowserWindow | null = () => null
 let quitting = false
@@ -104,6 +105,14 @@ function createTray(): void {
     tray = new Tray(icon)
     tray.setToolTip('Vectra')
     rebuildTrayMenu()
+
+    // Rebuild every minute so "X ago" labels stay accurate.
+    // The menu is cached by macOS after setContextMenu(), so without this the
+    // timestamp would be frozen at whatever it was when the scan finished.
+    if (trayLabelInterval) clearInterval(trayLabelInterval)
+    trayLabelInterval = setInterval(() => {
+      if (tray) rebuildTrayMenu()
+    }, 60_000)
   } catch {
     // icon missing in dev — skip tray
   }
@@ -115,6 +124,7 @@ export function setTrayVisibility(show: boolean): void {
   } else if (!show && tray) {
     tray.destroy()
     tray = null
+    if (trayLabelInterval) { clearInterval(trayLabelInterval); trayLabelInterval = null }
   }
 }
 
@@ -221,6 +231,7 @@ export function rebuildTrayMenu(): void {
     label: 'Quit',
     click: () => {
       setQuitting()
+      if (trayLabelInterval) { clearInterval(trayLabelInterval); trayLabelInterval = null }
       tray?.destroy()
       tray = null
       app.quit()

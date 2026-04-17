@@ -115,12 +115,12 @@ export function saveSettings(next: VectraSettings): void {
   writeFileSync(p, JSON.stringify(next, null, 2), 'utf-8')
 }
 
-export function patchSettings(patch: Partial<VectraSettings>): VectraSettings {
+export function patchSettings(patch: Partial<Omit<VectraSettings, 'backgroundScan'>> & { backgroundScan?: Partial<BackgroundScanSettings> }): VectraSettings {
   const current = loadSettings()
   const next: VectraSettings = {
     ...current,
     ...patch,
-    backgroundScan: { ...current.backgroundScan, ...(patch.backgroundScan ?? {}) },
+    backgroundScan: { ...current.backgroundScan, ...(patch.backgroundScan ?? {}) } as BackgroundScanSettings,
     deleteQuota: { ...current.deleteQuota, ...(patch.deleteQuota ?? {}) },
   }
   saveSettings(next)
