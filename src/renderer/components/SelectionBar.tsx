@@ -5,13 +5,59 @@ interface SelectionBarProps {
   selectedEntries: DiskEntry[]
   onDeselect: () => void
   onContinue: () => void
+  /** Compact stacked layout for narrow containers (e.g. the left panel) */
+  compact?: boolean
 }
 
-export function SelectionBar({ selectedEntries, onDeselect, onContinue }: SelectionBarProps) {
+export function SelectionBar({ selectedEntries, onDeselect, onContinue, compact }: SelectionBarProps) {
   const totalKB = selectedEntries.reduce((s, e) => s + e.sizeKB, 0)
   const count = selectedEntries.length
   const folders = selectedEntries.filter(e => e.isDir).length
   const files = count - folders
+
+  if (compact) {
+    return (
+      <div className="shrink-0 flex flex-col gap-2 px-3 py-2.5 bg-zinc-900/80 border-t border-white/[0.07]">
+        {/* Summary row */}
+        <div className="flex items-center justify-between gap-2 min-w-0">
+          <div className="min-w-0">
+            <p className="text-[11px] font-medium text-zinc-200 leading-snug truncate">
+              {count} {count === 1 ? 'item' : 'items'}
+              <span className="text-blue-400 font-semibold ml-1">{formatSize(totalKB)}</span>
+            </p>
+            {(folders > 0 || files > 0) && (
+              <p className="text-[10px] text-zinc-600 mt-0.5 truncate">
+                {[
+                  folders > 0 && `${folders} ${folders === 1 ? 'folder' : 'folders'}`,
+                  files > 0 && `${files} ${files === 1 ? 'file' : 'files'}`
+                ].filter(Boolean).join(' · ')}
+              </p>
+            )}
+          </div>
+          {/* Clear button */}
+          <button
+            onClick={onDeselect}
+            title="Clear selection"
+            className="shrink-0 w-5 h-5 flex items-center justify-center rounded text-zinc-500 hover:text-zinc-300 hover:bg-white/5 transition-colors"
+          >
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+        {/* Review button — full width */}
+        <button
+          onClick={onContinue}
+          className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-[11px] text-white font-medium transition-colors"
+        >
+          Review & Delete
+          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          </svg>
+        </button>
+      </div>
+    )
+  }
 
   return (
     <div className="shrink-0 flex items-center gap-3 px-4 py-2.5 bg-zinc-900 border-t border-white/[0.07]">

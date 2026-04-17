@@ -72,9 +72,13 @@ export function InfoPanel({ entry, isSelected, isPremium, onClose, onToggleSelec
   const [analysisError, setAnalysisError] = useState<string | null>(null)
   const [analysisComplete, setAnalysisComplete] = useState(false)
   const [aiHidden, setAiHidden] = useState(() => localStorage.getItem('vectra:aiHidden') === 'true')
+  const [aiMode, setAiMode] = useState<'cloud' | 'ollama'>('cloud')
 
-  // Trigger slide-in on mount
-  useEffect(() => { setMounted(true) }, [])
+  // Trigger slide-in on mount + read AI mode preference
+  useEffect(() => {
+    setMounted(true)
+    window.electronAPI.getAiMode().then(setAiMode).catch(() => {})
+  }, [])
 
   // Escape to close
   useEffect(() => {
@@ -127,7 +131,7 @@ export function InfoPanel({ entry, isSelected, isPremium, onClose, onToggleSelec
     ? 'KEEP'
     : null
 
-  const visibleText = analysis.replace(/\nRECOMMENDATION: (KEEP|DELETE)\s*$/i, '').trim()
+  const visibleText = analysis.replace(/\n?RECOMMENDATION:\s*(KEEP|DELETE)[^\n]*/gi, '').trim()
 
   return (
     <div
@@ -236,11 +240,12 @@ export function InfoPanel({ entry, isSelected, isPremium, onClose, onToggleSelec
             </div>
 
             <div className="rounded-lg bg-white/[0.03] border border-white/[0.05] p-3 min-h-[80px]">
-              {/* Ollama not found */}
-              {analysisError && isOllamaNotFound(analysisError) ? (
+              {/* Error states */}
+              {analysisError && aiMode === 'ollama' && isOllamaNotFound(analysisError) ? (
+                // Ollama not running / not installed
                 <div className="flex flex-col gap-3">
                   <p className="text-xs text-zinc-400 leading-relaxed">
-                    AI analysis requires <span className="text-zinc-200 font-medium">Ollama</span> — a free local AI runtime.
+                    Local AI requires <span className="text-zinc-200 font-medium">Ollama</span> — a free local AI runtime.
                   </p>
                   <div className="flex items-center gap-2.5">
                     <button
@@ -260,12 +265,17 @@ export function InfoPanel({ entry, isSelected, isPremium, onClose, onToggleSelec
                     </button>
                   </div>
                 </div>
+              ) : analysisError && aiMode === 'cloud' ? (
+                // Cloud AI unavailable
+                <p className="text-xs text-zinc-500 leading-relaxed">
+                  AI analysis is temporarily unavailable. Check your internet connection and try again.
+                </p>
               ) : analysisError ? (
                 <p className="text-xs text-red-400/80 leading-relaxed whitespace-pre-line">{analysisError}</p>
               ) : !analysis ? (
                 <div className="flex items-center gap-2 text-xs text-zinc-500">
                   <div className="w-3.5 h-3.5 rounded-full border-2 border-transparent border-t-violet-500 animate-spin shrink-0" />
-                  {model ? 'Analyzing…' : 'Connecting to Ollama…'}
+                  Analyzing…
                 </div>
               ) : (
                 <p className="text-xs text-zinc-300 leading-relaxed whitespace-pre-wrap">

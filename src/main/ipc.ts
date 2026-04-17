@@ -37,52 +37,81 @@ function getMacOSPathContext(itemPath: string): string {
   const home = os.homedir()
   const normalized = itemPath.replace(/\/+$/, '')
 
-  // Build a lookup of path → human description of what it is and its sensitivity.
-  // Ordered from most-specific to least-specific so first match wins.
+  // Ordered most-specific → least-specific so the first match wins.
   const knownPaths: Array<{ match: string | RegExp; description: string }> = [
-    // ── root / top-level ──────────────────────────────────────────────────────
-    { match: '/', description: 'The root of the macOS file system. Every file on the computer lives inside this directory. Deleting it would make the system completely non-functional.' },
 
-    // ── Core system trees ─────────────────────────────────────────────────────
-    { match: '/System', description: 'Contains the core macOS operating system files managed exclusively by Apple. Nothing in here should ever be deleted; doing so would make the Mac unbootable.' },
-    { match: '/System/Library', description: 'Houses frameworks, kernel extensions, and system-level resources required by macOS. Deleting anything here will break the operating system.' },
-    { match: '/Library', description: 'System-wide support files, fonts, preferences, and extensions installed for all users. Many items here are required for apps and system features to work.' },
-    { match: '/Applications', description: 'The standard install location for all macOS applications. Deleting this folder removes every app on the machine.' },
-    { match: '/usr', description: 'UNIX system resources including compilers, libraries, and command-line tools used by macOS and developer tools. Removing it breaks the system and all developer toolchains.' },
-    { match: '/usr/bin', description: 'Essential UNIX command-line binaries (e.g. python3, ruby, git wrappers) used by macOS internals and developer tools. Deleting this breaks the system shell environment.' },
-    { match: '/usr/lib', description: 'Shared system libraries that macOS and applications link against at runtime. Removing them causes apps and system services to crash.' },
-    { match: '/usr/local', description: 'User-installed UNIX tools (e.g. Homebrew packages, manual installs). Safer than /usr/bin but still contains tools that scripts and apps may depend on.' },
-    { match: '/bin', description: 'Fundamental UNIX shell commands (ls, cp, mv, bash, etc.) required for the system to boot and operate. Deleting this makes the Mac unbootable.' },
-    { match: '/sbin', description: 'System administration binaries used during boot and by macOS daemons. Deleting this prevents the system from starting correctly.' },
-    { match: '/etc', description: 'Symbolic link to /private/etc. Contains system-wide configuration files for networking, user accounts, and services. Removing it breaks system configuration.' },
-    { match: '/private/etc', description: 'System-wide configuration files: /etc/hosts, /etc/passwd, network settings, and more. These files are required for macOS to configure itself on every boot.' },
-    { match: '/var', description: 'Symbolic link to /private/var. Contains dynamic system data: logs, caches, databases, and temporary files that macOS writes to constantly while running.' },
-    { match: '/private/var', description: 'Holds variable system data including log files, system caches, the user database, and runtime state. Many system services write here continuously.' },
-    { match: '/private/tmp', description: 'Temporary files created by the operating system and apps. macOS clears this automatically; individual temp files are safe to delete but the folder itself must remain.' },
-    { match: '/private', description: 'Contains the real /etc, /var, and /tmp directories that their root-level symlinks point to. This entire tree is managed by macOS.' },
-    { match: '/Volumes', description: 'Mount point for all connected drives and disk images. This folder itself must not be deleted; the drives mounted inside it are independent.' },
-    { match: '/Network', description: 'Legacy mount point for network resources on macOS. Managed by the system.' },
-    { match: '/cores', description: 'Stores crash core dump files generated when processes crash. Individual dump files are safe to delete to recover space, but the folder is managed by macOS.' },
+    // ── Root ─────────────────────────────────────────────────────────────────
+    { match: '/', description: 'The root of the macOS filesystem. Deleting it would make the system completely non-functional.' },
 
-    // ── User home directory ───────────────────────────────────────────────────
-    { match: /^\/Users\/[^/]+$/, description: 'A user home directory — contains every file, setting, and document belonging to that macOS user account. Deleting it permanently destroys all of that user\'s personal data.' },
-    { match: '/Users', description: 'The parent folder for every user account on this Mac. Deleting it would wipe all user data for every account on the system.' },
-    { match: home, description: 'Your personal home directory. It contains all your documents, settings, application data, and personal files. Deleting it would permanently destroy all your personal data.' },
-    { match: `${home}/Library`, description: 'Stores all per-user application support data, preferences, caches, and saved states. Deleting it would reset or break every app installed for this user.' },
-    { match: `${home}/Library/Preferences`, description: 'Contains .plist preference files for every app installed for this user. Deleting individual plists resets that app\'s settings; deleting the folder resets all apps.' },
-    { match: `${home}/Library/Application Support`, description: 'Stores persistent app data such as databases, saved states, and user content created by applications. Deleting items here may cause permanent data loss for those apps.' },
-    { match: `${home}/Library/Keychains`, description: 'Holds the user\'s keychain files which store saved passwords, certificates, and secure credentials. Deleting this causes loss of all saved passwords.' },
-    { match: `${home}/Library/Mail`, description: 'Contains the local database and downloaded messages for the Mail app. Deleting it removes all locally stored emails.' },
-    { match: `${home}/Library/Messages`, description: 'Stores the local history for iMessage and SMS conversations synced from iPhone. Deleting it erases your local message history.' },
-    { match: `${home}/Library/Caches`, description: 'Application cache files for the current user. These are regenerated automatically and are generally safe to delete to recover disk space.' },
-    { match: `${home}/Library/Logs`, description: 'Log files written by user-level apps and processes. Generally safe to delete; apps will recreate them as needed.' },
-    { match: `${home}/Documents`, description: 'The standard folder for user documents and files. Contains personal data created by the user — deleting it causes irreversible data loss.' },
-    { match: `${home}/Desktop`, description: 'Files and folders the user has placed on the desktop. Contains personal data — deleting it causes data loss.' },
-    { match: `${home}/Downloads`, description: 'Files downloaded from the internet and other sources. Contents are generally user-managed but may include important files the user has not yet organized.' },
-    { match: `${home}/Movies`, description: 'The standard location for video projects and movie files, including Final Cut Pro and iMovie libraries. Contains personal media — deleting causes data loss.' },
-    { match: `${home}/Music`, description: 'Stores the Music app library and iTunes data including purchased music and playlists. Deleting it removes your music library.' },
-    { match: `${home}/Pictures`, description: 'Contains the Photos app library and other image files. The Photos library holds your entire photo collection — deleting it causes permanent data loss.' },
-    { match: `${home}/Applications`, description: 'User-specific application installs (installed only for this user rather than system-wide). Removing it uninstalls those apps for this user.' },
+    // ── Core OS ──────────────────────────────────────────────────────────────
+    { match: '/System/Library', description: 'macOS system frameworks, kernel extensions, and low-level resources. Deleting anything here breaks the operating system.' },
+    { match: '/System', description: 'Core macOS operating system managed by Apple. Nothing here should ever be deleted — the Mac would become unbootable.' },
+    { match: '/bin', description: 'Fundamental UNIX shell commands (ls, cp, mv, bash). Required to boot and operate. Never delete.' },
+    { match: '/sbin', description: 'System administration binaries used at boot by macOS daemons. Never delete.' },
+    { match: '/usr/bin', description: 'Essential UNIX binaries used by macOS internals and developer tools (python3, ruby, git wrappers). Deleting breaks the shell environment.' },
+    { match: '/usr/lib', description: 'Shared system libraries that macOS and apps link against at runtime. Removing causes crashes.' },
+    { match: '/usr/local/Cellar', description: 'Homebrew package cellar (Intel Mac). Each subfolder is one installed Homebrew package. Deleting a subfolder uninstalls that package; deleting the whole folder removes all of them.' },
+    { match: '/usr/local', description: 'User-installed UNIX tools such as Homebrew packages. Safer than /usr/bin but scripts and apps may depend on tools here.' },
+    { match: '/usr', description: 'UNIX system resources including compilers, libraries, and command-line tools used by macOS and Xcode. Removing it breaks the system.' },
+    { match: '/private/etc', description: 'System-wide config files (/etc/hosts, /etc/passwd, networking). Required for macOS to configure itself on every boot.' },
+    { match: '/etc', description: 'Symlink to /private/etc — system-wide configuration files. Removing it breaks system configuration.' },
+    { match: '/private/var', description: 'Variable system data: logs, caches, databases, runtime state. Many system services write here continuously.' },
+    { match: '/var', description: 'Symlink to /private/var — dynamic system data managed by macOS.' },
+    { match: '/private/tmp', description: 'OS-managed temporary files. macOS clears this automatically; individual tmp files are safe to delete.' },
+    { match: '/private', description: 'Contains the real /etc, /var, and /tmp directories. Managed entirely by macOS.' },
+    { match: '/cores', description: 'Crash core dump files. Individual dumps are safe to delete to recover space; the folder itself must stay.' },
+    { match: '/Volumes', description: 'Mount point for connected drives and disk images. The folder must not be deleted; mounted drives inside it are independent.' },
+
+    // ── System-wide Library ───────────────────────────────────────────────────
+    { match: '/Library/Caches', description: 'System-wide app cache files. Safe to delete — apps and macOS recreate them automatically.' },
+    { match: '/Library/Application Support', description: 'System-wide persistent app data. Deleting items here may break apps installed for all users.' },
+    { match: '/Library/Logs', description: 'System-wide log files. Safe to delete — apps recreate logs as needed.' },
+    { match: '/Library/Preferences', description: 'System-wide preference plists. Deleting an individual plist resets that service\'s settings; deleting the folder breaks many system services.' },
+    { match: '/Library', description: 'System-wide support files, fonts, preferences, and extensions for all users. Many items are required by apps and system features.' },
+    { match: '/Applications', description: 'Standard install location for all macOS apps. Deleting the folder removes every app; deleting a single .app uninstalls that app.' },
+
+    // ── Homebrew (Apple Silicon) ──────────────────────────────────────────────
+    { match: '/opt/homebrew/Cellar', description: 'Homebrew package cellar (Apple Silicon Mac). Each subfolder is one installed package. Deleting a subfolder uninstalls that package.' },
+    { match: '/opt/homebrew', description: 'Homebrew package manager installation (Apple Silicon). Deleting this uninstalls all Homebrew packages and the package manager itself.' },
+
+    // ── Users parent ─────────────────────────────────────────────────────────
+    { match: '/Users', description: 'Parent of all user home directories on this Mac. Deleting it destroys every user account\'s personal data permanently.' },
+    { match: /^\/Users\/[^/]+$/, description: 'A macOS user home directory containing every file, setting, and document for that account. Deleting it permanently destroys all that user\'s data.' },
+
+    // ── This user's home ─────────────────────────────────────────────────────
+    { match: home, description: 'Your personal home directory — documents, settings, and all personal files. Deleting it causes permanent, total data loss.' },
+
+    // ── ~/Library — specific subdirs (most specific first) ────────────────────
+    { match: `${home}/Library/Keychains`, description: 'Keychain files storing all saved passwords, certificates, and secure credentials. Deleting causes permanent loss of all saved passwords.' },
+    { match: `${home}/Library/Mail`, description: 'Mail app local database and downloaded messages. Deleting removes all locally stored emails.' },
+    { match: `${home}/Library/Messages`, description: 'iMessage and SMS conversation history synced from iPhone. Deleting permanently erases local message history.' },
+    { match: `${home}/Library/Photos`, description: 'Photos app library — your entire photo and video collection. Deleting causes permanent data loss unless you have a backup.' },
+    { match: `${home}/Library/Containers`, description: 'Sandboxed data containers for Mac App Store and sandboxed apps. Each subfolder holds one app\'s complete data (documents, databases, settings). Deleting a container resets or fully removes that app\'s data — use only if uninstalling the app or if the data is known to be regenerable.' },
+    { match: `${home}/Library/Group Containers`, description: 'Shared data containers used by groups of related apps (e.g. iCloud-enabled app families). Deleting items here can break cross-app syncing and shared features.' },
+    { match: `${home}/Library/Developer/Xcode/DerivedData`, description: 'Xcode\'s build cache — compiled object files and intermediate build products for all Xcode projects. Completely safe to delete; Xcode rebuilds everything automatically on the next build. Commonly 10–50 GB on an active developer machine.' },
+    { match: `${home}/Library/Developer/Xcode/iOS DeviceSupport`, description: 'Device support files for physical iOS/iPadOS devices connected to Xcode. Can grow very large over time. Safe to delete; Xcode re-downloads them when you reconnect a device.' },
+    { match: `${home}/Library/Developer/Xcode/watchOS DeviceSupport`, description: 'Device support files for Apple Watch connected to Xcode. Safe to delete; re-downloaded when device is reconnected.' },
+    { match: `${home}/Library/Developer/CoreSimulator/Caches`, description: 'iOS/iPadOS Simulator cache. Safe to delete — regenerated automatically.' },
+    { match: `${home}/Library/Developer/CoreSimulator`, description: 'iOS, iPadOS, and watchOS Simulator data including device files and app installs. Safe to delete if simulators are not in active use; Xcode re-downloads runtimes when needed.' },
+    { match: `${home}/Library/Developer`, description: 'Developer tool data including Xcode build caches, device support files, and iOS Simulator data. Most contents are large and safely regenerable.' },
+    { match: `${home}/Library/Application Support`, description: 'Persistent per-user app data: databases, saved states, user content created by apps. Deleting items here may cause permanent data loss or app resets.' },
+    { match: `${home}/Library/Preferences`, description: 'Per-user .plist preference files. Deleting an individual plist resets that app\'s settings to defaults; the app recreates it on next launch.' },
+    { match: `${home}/Library/Caches`, description: 'Per-user app cache files. Automatically regenerated — safe to delete to recover disk space.' },
+    { match: `${home}/Library/Logs`, description: 'Log files from user-level apps. Safe to delete; apps recreate logs as needed.' },
+    { match: `${home}/Library/Saved Application State`, description: 'Saved window and app states used by macOS to restore apps on reopen. Safe to delete; apps recreate these on next launch.' },
+    { match: `${home}/Library/WebKit`, description: 'WebKit browser data (cookies, storage) for apps using the system WebView. Safe to delete; causes apps to lose web session state.' },
+    { match: `${home}/Library/HTTPStorages`, description: 'HTTP cookie and storage data for apps using the system network stack. Safe to delete; apps will re-fetch data.' },
+    { match: `${home}/Library`, description: 'Stores all per-user app support data, preferences, caches, and saved states. Deleting it resets or breaks every app for this user.' },
+
+    // ── Personal folders ──────────────────────────────────────────────────────
+    { match: `${home}/Desktop`, description: 'Files on the user\'s desktop. Contains personal data — deleting causes data loss.' },
+    { match: `${home}/Documents`, description: 'Standard user documents folder. Contains personal files — deleting causes irreversible data loss.' },
+    { match: `${home}/Downloads`, description: 'Files downloaded from the internet. May include important files not yet organized. Review before deleting.' },
+    { match: `${home}/Movies`, description: 'Video files, Final Cut Pro / iMovie project libraries, and screen recordings. Personal media — deleting causes data loss.' },
+    { match: `${home}/Music`, description: 'Music app / iTunes library including purchased music and playlists. Deleting removes your music library.' },
+    { match: `${home}/Pictures`, description: 'Photos app library and image files. The Photos library contains your entire photo collection — deleting causes permanent data loss.' },
+    { match: `${home}/Applications`, description: 'Apps installed only for this user (not system-wide). Deleting removes those apps for this user.' },
+    { match: `${home}/Public`, description: 'Files shared with other users on this Mac via local file sharing. Generally safe to delete if sharing is not in use.' },
   ]
 
   for (const entry of knownPaths) {
@@ -92,21 +121,86 @@ function getMacOSPathContext(itemPath: string): string {
     if (hit) return entry.description
   }
 
-  // Generic context based on well-known path segments
-  if (normalized.startsWith(`${home}/Library/Caches`)) {
-    return 'An application cache directory inside the user Library. Cache files are temporary and regenerated automatically — safe to delete to recover space.'
+  // Generic fallbacks for common subtrees
+  if (normalized.startsWith(`${home}/Library/Containers/`)) {
+    const bundle = normalized.replace(`${home}/Library/Containers/`, '').split('/')[0]
+    return `Sandboxed data container for the app with bundle ID "${bundle}". Contains that app's complete data. Deleting resets the app or removes its data entirely.`
+  }
+  if (normalized.startsWith(`${home}/Library/Caches/`)) {
+    return 'An app cache directory inside the user Library. Regenerated automatically — safe to delete to recover disk space.'
+  }
+  if (normalized.startsWith(`${home}/Library/Application Support/`)) {
+    return 'Persistent data for an app stored in the user Library Application Support folder. Deleting may cause data loss or reset the app.'
   }
   if (normalized.startsWith(`${home}/Library/`)) {
-    return 'A subdirectory inside the user Library folder, which stores per-user application data, preferences, and support files.'
+    return 'A subdirectory inside the user Library — stores per-user app data, preferences, or support files.'
   }
-  if (normalized.startsWith('/Library/Caches')) {
-    return 'System-wide application cache files. Generally safe to delete; apps and the OS will recreate them as needed.'
+  if (normalized.startsWith('/Library/Caches/')) {
+    return 'System-wide app cache. Safe to delete — recreated automatically.'
   }
   if (normalized.startsWith('/Library/')) {
-    return 'A subdirectory inside the system Library, which stores system-wide application support files, fonts, and configuration data.'
+    return 'A subdirectory inside the system Library — stores system-wide app support files, fonts, or configuration.'
   }
 
   return ''
+}
+
+/** Infer a human-readable app name from a macOS bundle ID or .app name. */
+function inferAppName(name: string): string | null {
+  // Strip .app suffix
+  const withoutApp = name.endsWith('.app') ? name.slice(0, -4) : name
+
+  // Looks like a bundle ID (e.g. com.docker.docker, net.whatsapp.WhatsApp)
+  const isBundleId = /^[a-z]{2,6}\.[a-zA-Z][\w.-]+$/.test(withoutApp)
+  if (isBundleId) {
+    const parts = withoutApp.split('.')
+    // Last segment, split camelCase into words
+    const raw = parts[parts.length - 1]
+    return raw.replace(/([A-Z])/g, ' $1').trim()
+  }
+
+  // Already a plain name (e.g. "Xcode", "com.apple.Safari" → take last segment)
+  return null
+}
+
+/** Return a file-type hint for common extensions to help the AI give a better verdict. */
+function getFileTypeHint(name: string, isDir: boolean): string {
+  if (isDir) {
+    const lower = name.toLowerCase()
+    if (lower === 'node_modules')       return 'npm/yarn dependency directory — safe to delete; regenerated by running npm install.'
+    if (lower === '.gradle')            return 'Gradle build cache — safe to delete; regenerated on next build.'
+    if (lower === 'deriveddata')        return 'Xcode build cache — safe to delete; rebuilt automatically.'
+    if (lower === '.build')             return 'Swift Package Manager build cache — safe to delete; rebuilt automatically.'
+    if (lower === 'vendor')             return 'Third-party dependency directory (Go, PHP, Ruby) — safe to delete; regenerated by the package manager.'
+    if (lower === 'target')             return 'Rust/Maven/Gradle build output directory — safe to delete; rebuilt automatically.'
+    if (lower === 'dist' || lower === 'build' || lower === 'out')
+      return 'Build output directory — safe to delete; regenerated by the build tool.'
+    if (lower === '.cache')             return 'Tool or build cache directory — usually safe to delete.'
+    if (lower === 'tmp' || lower === 'temp') return 'Temporary files directory — safe to delete.'
+    return ''
+  }
+  const ext = name.split('.').pop()?.toLowerCase() ?? ''
+  const hints: Record<string, string> = {
+    dmg:      'macOS disk image installer — safe to delete once the app is installed.',
+    pkg:      'macOS installer package — safe to delete after installation.',
+    zip:      'ZIP archive — safe to delete once extracted.',
+    'tar.gz': 'Compressed archive — safe to delete once extracted.',
+    gz:       'Gzip-compressed file (usually a downloaded archive) — safe to delete once extracted.',
+    tgz:      'Compressed tar archive — safe to delete once extracted.',
+    log:      'Log file — safe to delete.',
+    crash:    'Crash report — safe to delete.',
+    tmp:      'Temporary file — safe to delete.',
+    bak:      'Backup file — safe to delete if the original is intact.',
+    old:      'Old/backup file — usually safe to delete.',
+    ipa:      'iOS app archive — safe to delete if you no longer need this build.',
+    xcarchive:'Xcode build archive for distribution. Can be large. Safe to delete if you no longer need this specific build for App Store submission or crash symbolication.',
+    'dSYM':   'Xcode debug symbols — needed for crash report symbolication. Safe to delete if not needed.',
+    bz2:      'BZip2-compressed archive — safe to delete once extracted.',
+    xz:       'XZ-compressed archive — safe to delete once extracted.',
+    iso:      'Disk image (CD/DVD/ISO) — safe to delete if contents are no longer needed.',
+    img:      'Disk image — safe to delete if no longer needed.',
+  }
+  return hints[ext] ? `File type: ${hints[ext]}` : ''
 }
 
 async function pickOllamaModel(): Promise<string> {
@@ -562,7 +656,119 @@ export function registerIpcHandlers(): void {
     return unique
   })
 
-  // ── Ollama AI ─────────────────────────────────────────────────────────────
+  // ── AI Analysis (Cloud or Ollama) ─────────────────────────────────────────
+
+  // OpenAI config — set VITE_OPENAI_API_KEY in .env to enable cloud mode.
+  const _aiEnv = (import.meta as unknown as { env: Record<string, string> }).env
+  const OPENAI_API_KEY = _aiEnv.VITE_OPENAI_API_KEY ?? ''
+
+  // Stored prompt template ID on OpenAI (model + system prompt configured there)
+  const OPENAI_PROMPT_ID      = _aiEnv.VITE_OPENAI_PROMPT_ID ?? ''
+  const OPENAI_PROMPT_VERSION = _aiEnv.VITE_OPENAI_PROMPT_VERSION ?? '1'
+
+  /** Stream an OpenAI Responses API SSE response and emit ollama-token / ollama-done events. */
+  async function streamResponsesAPI(
+    body: ReadableStream<Uint8Array>,
+    send: (ch: string, d: unknown) => void
+  ): Promise<void> {
+    const reader = body.getReader()
+    const dec = new TextDecoder()
+    let buf = ''
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += dec.decode(value, { stream: true })
+      const lines = buf.split('\n')
+      buf = lines.pop() ?? ''
+      for (const line of lines) {
+        const trimmed = line.trim()
+        if (!trimmed || !trimmed.startsWith('data:')) continue
+        const json = trimmed.slice(5).trim()
+        if (!json) continue
+
+        let obj: { type?: string; delta?: string; response?: { error?: { message?: string } } }
+        try {
+          obj = JSON.parse(json)
+        } catch {
+          continue  // partial / malformed line — skip and wait for next chunk
+        }
+
+        if (obj.type === 'response.output_text.delta' && obj.delta) {
+          send('ollama-token', obj.delta)
+        } else if (obj.type === 'response.completed') {
+          send('ollama-done', null)
+          return
+        } else if (obj.type === 'response.failed') {
+          throw new Error(obj.response?.error?.message ?? 'AI analysis failed')
+        }
+      }
+    }
+    send('ollama-done', null)
+  }
+
+  /** System-level persona for the AI — shared across cloud and Ollama. */
+  const AI_SYSTEM_PROMPT = `You are a macOS storage expert built into a disk-cleaner app. Your job is to analyze a single file or folder and give the user a concise, accurate verdict on what it is and whether deleting it is safe. You reason strictly from the actual path provided — never assume a path is in a different location than stated.
+
+Rules:
+- Plain prose only. No markdown, no bullet points, no headings.
+- 2-3 sentences maximum.
+- End with exactly one line: RECOMMENDATION: DELETE  or  RECOMMENDATION: KEEP
+- Your recommendation must be consistent with your explanation. Never say "risky" and then DELETE. Never say "safe" and then KEEP.`
+
+  /** Build the user-turn prompt for a given disk item. */
+  function buildAnalysisPrompt(payload: { path: string; name: string; isDir: boolean; sizeKB: number }): string {
+    const pathContext = getMacOSPathContext(payload.path)
+    return `Analyze this macOS disk item:
+
+Name: ${payload.name}
+Path: ${payload.path}
+Type: ${payload.isDir ? 'Folder' : 'File'}
+Size: ${formatSizeForPrompt(payload.sizeKB)}
+${pathContext ? `Path context: ${pathContext}\n` : ''}
+macOS path reference (use this to reason accurately — match the actual path above):
+- /System  /usr  /bin  /sbin  /private/etc  /private/var → core OS. Never delete.
+- /Library (system-level) → system app support, fonts, extensions. Usually required.
+- /Applications → installed apps. Delete only if you want to uninstall.
+- ~/Library/Containers/{bundle} → sandboxed app data. May contain important user data; only delete if the app is already uninstalled or the folder is extremely large and the app can rebuild it.
+- ~/Library/Group Containers → shared data between app groups. Usually keep.
+- ~/Library/Application Support/{app} → persistent app config and data. Usually keep; deleting resets the app.
+- ~/Library/Preferences/{app}.plist → app preferences. Deleting resets settings only.
+- ~/Library/Keychains → credentials and certificates. Never delete.
+- ~/Library/Caches/{app} → regenerable cache. Safe to delete.
+- ~/Library/Logs  /Library/Logs → log files. Safe to delete.
+- ~/Library/Developer/Xcode/DerivedData → Xcode build cache. Safe to delete.
+- ~/Library/Developer/CoreSimulator → iOS Simulator data. Large; safe to delete if not actively using simulators.
+- node_modules  .gradle  target  build  dist (inside project folders) → build/dependency dirs. Safe to delete; regenerated by the build tool.
+- ~/Documents  ~/Desktop  ~/Downloads  ~/Movies  ~/Music  ~/Pictures → personal files. Never delete.
+- /Users → parent of all home folders. Never delete.
+
+What is this item and is it safe to delete?`
+  }
+
+  /** Stream NDJSON from a ReadableStream and emit ollama-token / ollama-done IPC events. */
+  async function streamNdjson(
+    body: ReadableStream<Uint8Array>,
+    send: (ch: string, d: unknown) => void
+  ): Promise<void> {
+    const reader = body.getReader()
+    const dec = new TextDecoder()
+    let buf = ''
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += dec.decode(value, { stream: true })
+      const lines = buf.split('\n')
+      buf = lines.pop() ?? ''
+      for (const line of lines) {
+        if (!line.trim()) continue
+        const obj = JSON.parse(line) as { response?: string; done?: boolean; error?: string }
+        if (obj.error) throw new Error(obj.error)
+        if (obj.response) send('ollama-token', obj.response)
+        if (obj.done) { send('ollama-done', null); return }
+      }
+    }
+    send('ollama-done', null)
+  }
 
   ipcMain.on(
     'ollama-start',
@@ -581,64 +787,62 @@ export function registerIpcHandlers(): void {
       }
 
       try {
-        const model = await pickOllamaModel()
-        if (ollamaUserCancelled) return
+        const aiMode = loadSettings().aiMode ?? 'cloud'
 
-        send('ollama-model', model)
-
-        const pathContext = getMacOSPathContext(payload.path)
-
-        const prompt = `Do not use markdown, just plain sentences and text. You are a macOS storage expert helping a user understand items on their disk.
-
-Item details:
-Name: ${payload.name}
-Path: ${payload.path}
-Type: ${payload.isDir ? 'Folder' : 'File'}
-Size: ${formatSizeForPrompt(payload.sizeKB)}
-${pathContext ? `\nContext about this path: ${pathContext}\n` : ''}
-macOS directory reference (use this to reason about safety):
-- /System, /usr, /bin, /sbin, /private/etc, /private/var — core OS files, never safe to delete
-- /Library — system-wide app support, fonts, extensions; most items required by apps
-- /Users — parent of all user home folders; deleting destroys all user accounts
-- ~/Library/Application Support, ~/Library/Preferences, ~/Library/Keychains — important per-user app data; individual files may be resettable but whole folders should not be deleted
-- ~/Documents, ~/Desktop, ~/Downloads, ~/Movies, ~/Music, ~/Pictures — personal user data, never safe to bulk-delete
-- ~/Library/Caches, /Library/Caches, tmp, temp, Logs, DerivedData — regenerable; generally safe to delete
-
-In 2 brief sentences explain what this item is and whether deleting it is safe, using the context above to reason accurately.
-
-Then end with exactly one recommendation that matches your explanation:
-- If deleting is safe or the item can be regenerated: RECOMMENDATION: DELETE
-- If deleting could break something, cause data loss, or cause instability: RECOMMENDATION: KEEP
-
-Your recommendation MUST be consistent with your explanation. Do not say deleting is risky and then recommend DELETE. Do not say it is safe and then recommend KEEP.`
-
-        const res = await net.fetch('http://localhost:11434/api/generate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ model, prompt, stream: true }),
-          signal: ollamaAbort.signal
-        })
-
-        if (!res.ok || !res.body) throw new Error(`Ollama returned ${res.status}`)
-
-        const reader = res.body.getReader()
-        const dec = new TextDecoder()
-        let buf = ''
-
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
-          buf += dec.decode(value, { stream: true })
-          const lines = buf.split('\n')
-          buf = lines.pop() ?? ''
-          for (const line of lines) {
-            if (!line.trim()) continue
-            const obj = JSON.parse(line) as { response?: string; done?: boolean }
-            if (obj.response) send('ollama-token', obj.response)
-            if (obj.done) { send('ollama-done', null); return }
+        if (aiMode === 'cloud') {
+          // ── OpenAI Responses API (stored prompt template) ──────────────────
+          if (!OPENAI_API_KEY) {
+            throw new Error('Cloud AI is not configured. Set VITE_OPENAI_API_KEY in your .env file.')
           }
+
+          send('ollama-model', 'Cloud AI')
+
+          const res = await net.fetch('https://api.openai.com/v1/responses', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${OPENAI_API_KEY}`,
+            },
+            body: JSON.stringify({
+              stream: true,
+              prompt: {
+                id:      OPENAI_PROMPT_ID,
+                version: OPENAI_PROMPT_VERSION,
+                variables: {
+                  name:         payload.name,
+                  path:         payload.path,
+                  is_directory: payload.isDir ? 'true' : 'false',
+                  size:         formatSizeForPrompt(payload.sizeKB),
+                  path_context: getMacOSPathContext(payload.path),
+                },
+              },
+            }),
+            signal: ollamaAbort.signal
+          })
+
+          if (!res.ok || !res.body) {
+            const errText = await res.text().catch(() => '')
+            throw new Error(`OpenAI returned ${res.status}${errText ? ': ' + errText : ''}`)
+          }
+          await streamResponsesAPI(res.body, send)
+        } else {
+          // ── Ollama (local) path ────────────────────────────────────────────
+          const prompt = buildAnalysisPrompt(payload)
+          const model = await pickOllamaModel()
+          if (ollamaUserCancelled) return
+
+          send('ollama-model', model)
+
+          const res = await net.fetch('http://localhost:11434/api/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model, prompt: `${AI_SYSTEM_PROMPT}\n\n${prompt}`, stream: true }),
+            signal: ollamaAbort.signal
+          })
+
+          if (!res.ok || !res.body) throw new Error(`Ollama returned ${res.status}`)
+          await streamNdjson(res.body, send)
         }
-        send('ollama-done', null)
       } catch (err: unknown) {
         if (ollamaUserCancelled) return
         const msg = err instanceof Error ? err.message : String(err)
@@ -655,6 +859,11 @@ Your recommendation MUST be consistent with your explanation. Do not say deletin
       ollamaAbort.abort()
       ollamaAbort = null
     }
+  })
+
+  ipcMain.handle('get-ai-mode', () => loadSettings().aiMode ?? 'cloud')
+  ipcMain.on('set-ai-mode', (_event, mode: 'cloud' | 'ollama') => {
+    patchSettings({ aiMode: mode })
   })
 
   // ── Settings ───────────────────────────────────────────────────────────────

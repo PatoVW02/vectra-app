@@ -8,7 +8,7 @@ const FEATURES = [
   { icon: '✦', label: 'Smart Clean', desc: 'AI-curated list of safe-to-delete caches, logs & leftovers' },
   { icon: '🗑', label: 'Unlimited deletes from app', desc: 'No monthly cap when cleaning directly inside Vectra' },
   { icon: '⚡', label: 'Background scans', desc: 'Scheduled recurring scans with tray notifications' },
-  { icon: '🤖', label: 'AI analysis', desc: 'Per-item explanations and delete recommendations via Ollama' },
+  { icon: '🤖', label: 'AI analysis', desc: 'Per-item explanations and delete recommendations via OpenAI or local Ollama' },
   { icon: '⚙', label: 'Custom Quick Scan folders', desc: 'Add any folder to your Quick Scan preset' },
 ]
 
@@ -25,6 +25,13 @@ export function UpgradeModal({ onClose, onActivate }: UpgradeModalProps) {
     return () => cancelAnimationFrame(id)
   }, [])
 
+  // Escape to close
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
   function openCheckout(url: string) {
     window.electronAPI.openExternal(url)
   }
@@ -32,26 +39,25 @@ export function UpgradeModal({ onClose, onActivate }: UpgradeModalProps) {
   return createPortal(
     <div
       className={[
-        'fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm',
+        'fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-6',
         'transition-opacity duration-200 ease-out',
         entered ? 'opacity-100' : 'opacity-0'
       ].join(' ')}
       onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
     >
-      <div className={[
-        'relative w-full max-w-[560px] mx-4 bg-zinc-900/80 backdrop-blur-2xl border border-white/[0.12] rounded-2xl shadow-2xl overflow-hidden',
-        'transition-all duration-200 ease-out',
-        entered ? 'opacity-100 translate-y-0 scale-100' : 'opacity-0 translate-y-2 scale-[0.98]'
-      ].join(' ')}>
-        {/* Close */}
-        <button
-          onClick={onClose}
-          className="absolute top-4 right-4 w-7 h-7 flex items-center justify-center rounded-full text-zinc-500 hover:text-zinc-300 hover:bg-white/8 transition-colors z-10"
-        >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
+      {/* Wrapper: same width as card, relative so the button positions off the card corner */}
+      <div
+        className="relative w-full max-w-[560px]"
+        onClick={(e) => e.stopPropagation()}
+      >
+      <div
+        className={[
+          'w-full bg-zinc-900/80 backdrop-blur-2xl border border-white/[0.12] rounded-2xl shadow-2xl overflow-y-auto',
+          'max-h-[min(640px,calc(100vh-3rem))]',
+          'transition-all duration-200 ease-out',
+          entered ? 'opacity-100 translate-y-0 scale-100' : 'opacity-0 translate-y-2 scale-[0.98]'
+        ].join(' ')}
+      >
 
         {/* Header */}
         <div className="px-8 pt-8 pb-6 text-center border-b border-white/5">
@@ -124,6 +130,19 @@ export function UpgradeModal({ onClose, onActivate }: UpgradeModalProps) {
             Already have a license key? Activate it →
           </button>
         </div>
+      </div>
+
+        {/* Close button — comes AFTER the card in DOM so it always paints on top.
+            Positioned absolute relative to the wrapper, outside overflow-hidden so it's never clipped. */}
+        <button
+          onClick={onClose}
+          className="absolute top-3 right-3 w-7 h-7 flex items-center justify-center rounded-full text-zinc-500 hover:text-zinc-300 hover:bg-white/10 transition-colors"
+          aria-label="Close"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
       </div>
     </div>,
     document.body,

@@ -18,6 +18,8 @@ export interface VectraSettings {
   preferredOllamaModel: string | null
   onboardingComplete: boolean
   showDevDependencies: boolean
+  /** 'cloud' = OpenAI (default); 'ollama' = local Ollama */
+  aiMode: 'cloud' | 'ollama'
   /** Folder names (relative to ~/Library) included in Quick Scan mode. */
   quickScanFolders: string[]
   /** Absolute paths the user has added via the folder picker. */
@@ -52,6 +54,7 @@ const DEFAULTS: VectraSettings = {
   preferredOllamaModel: null,
   onboardingComplete: false,
   showDevDependencies: false,
+  aiMode: 'cloud',
   quickScanFolders: ['Caches', 'Logs', 'Developer', 'Containers', 'Downloads', 'Desktop'],
   customQuickScanFolders: [],
   lastManualScanTime: null,

@@ -165,6 +165,7 @@ export function SettingsPanel({ onClose, onDevDepsChange, quickScanFolders, onQu
 
   // AI state
   const [aiEnabled, setAiEnabled] = useState(() => localStorage.getItem('vectra:aiHidden') !== 'true')
+  const [aiMode, setAiMode] = useState<'cloud' | 'ollama'>('cloud')
   const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus>('idle')
   const [installedModels, setInstalledModels] = useState<OllamaModel[]>([])
   const [pullingModel, setPullingModel] = useState<string | null>(null)
@@ -179,6 +180,7 @@ export function SettingsPanel({ onClose, onDevDepsChange, quickScanFolders, onQu
   useEffect(() => {
     window.electronAPI.getSettings().then(setSettings).catch(() => {})
     window.electronAPI.getLoginItem().then(setLoginItem).catch(() => {})
+    window.electronAPI.getAiMode().then(setAiMode).catch(() => {})
     if (window.electronAPI.getAppVersion) {
       window.electronAPI.getAppVersion().then(setAppVersion).catch(() => {})
     }
@@ -282,10 +284,11 @@ export function SettingsPanel({ onClose, onDevDepsChange, quickScanFolders, onQu
     return () => window.electronAPI.removeUpdaterListeners()
   }, [])
 
-  // Check Ollama whenever AI is toggled on
+  // Check Ollama whenever AI is toggled on or when switching to Ollama mode
   useEffect(() => {
-    if (aiEnabled) checkOllama()
-  }, [aiEnabled])
+    if (aiEnabled && aiMode === 'ollama') checkOllama()
+    else if (aiMode === 'cloud') setOllamaStatus('idle')
+  }, [aiEnabled, aiMode])
 
   async function checkOllama() {
     setOllamaStatus('checking')
@@ -449,6 +452,14 @@ export function SettingsPanel({ onClose, onDevDepsChange, quickScanFolders, onQu
     }
   }
 
+  function handleAiModeChange(mode: 'cloud' | 'ollama') {
+    setAiMode(mode)
+    window.electronAPI.setAiMode(mode)
+    // When switching to Ollama, kick off a status check if AI is enabled
+    if (mode === 'ollama' && aiEnabled) checkOllama()
+    else setOllamaStatus('idle')
+  }
+
   async function setActiveModel(modelName: string) {
     if (!settings) return
     const next = { ...settings, preferredOllamaModel: modelName }
@@ -538,13 +549,15 @@ export function SettingsPanel({ onClose, onDevDepsChange, quickScanFolders, onQu
           <h2 className="text-[10px] font-semibold text-zinc-600 uppercase tracking-widest mb-3">
             License
           </h2>
-        <div className="px-4 py-4 rounded-xl bg-white/[0.03] border border-white/[0.06]">
-          <div className="flex items-center justify-between">
+        <div className="rounded-xl bg-white/[0.03] border border-white/[0.06] divide-y divide-white/[0.04]">
+          <div className="px-4 py-4 flex items-center justify-between">
             <div>
               <p className="text-xs font-medium text-zinc-300">Vectra Premium</p>
               <p className="text-[11px] text-zinc-600 mt-0.5">
                 {isPremium
                   ? `Active · ${license?.licenseType === 'lifetime' ? 'Lifetime' : 'Monthly'}`
+                  : license && !license.active && license.licenseType === 'subscription' && license.expiresAt
+                  ? 'Subscription expired'
                   : 'Unlock Smart Clean, AI analysis & more'}
               </p>
             </div>
@@ -564,6 +577,22 @@ export function SettingsPanel({ onClose, onDevDepsChange, quickScanFolders, onQu
               </button>
             )}
           </div>
+          {/* Subscription expiry notice */}
+          {!isPremium && license && !license.active && license.licenseType === 'subscription' && license.expiresAt && (
+            <div className="px-4 py-3 flex items-center justify-between gap-3">
+              <p className="text-[11px] text-amber-400/90 leading-snug">
+                Your subscription expired on{' '}
+                {new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(license.expiresAt))}.
+                Renew to restore access.
+              </p>
+              <button
+                onClick={onUpgrade}
+                className="shrink-0 text-[11px] font-medium text-amber-400 hover:text-amber-300 border border-amber-500/30 hover:border-amber-500/50 rounded-md px-2.5 py-1 transition-colors"
+              >
+                Renew →
+              </button>
+            </div>
+          )}
         </div>
         </section>
         )}
@@ -651,19 +680,72 @@ export function SettingsPanel({ onClose, onDevDepsChange, quickScanFolders, onQu
             {!isPremium && <PremiumLock onUpgrade={onUpgrade} />}
           <div className="rounded-xl bg-white/[0.03] border border-white/[0.06] divide-y divide-white/[0.04]">
 
-            {/* Toggle row */}
+            {/* Enable toggle */}
             <div className="flex items-start justify-between gap-4 px-4 py-4">
               <div className="min-w-0">
                 <p className="text-sm text-zinc-200 font-medium">Enable AI analysis</p>
                 <p className="text-xs text-zinc-500 mt-1 leading-relaxed">
-                  Uses a local model via Ollama to explain files and recommend what's safe to delete. Everything stays on your Mac.
+                  Explains files and recommends what's safe to delete.
                 </p>
               </div>
               <Toggle on={aiEnabled} onClick={toggleAI} />
             </div>
 
-            {/* Content when enabled */}
+            {/* AI mode selector */}
             {aiEnabled && (
+              <div className="px-4 py-4 flex flex-col gap-2">
+                <p className="text-[10px] font-semibold text-zinc-600 uppercase tracking-widest mb-1">AI Provider</p>
+                <div className="flex gap-2">
+                  {/* Cloud option */}
+                  <button
+                    onClick={() => handleAiModeChange('cloud')}
+                    className={[
+                      'flex-1 flex flex-col items-start gap-1 px-3 py-3 rounded-xl border transition-all text-left',
+                      aiMode === 'cloud'
+                        ? 'border-blue-500/40 bg-blue-600/10'
+                        : 'border-white/[0.07] bg-white/[0.02] hover:bg-white/[0.04]'
+                    ].join(' ')}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <div className={['w-1.5 h-1.5 rounded-full shrink-0', aiMode === 'cloud' ? 'bg-blue-400' : 'bg-zinc-600'].join(' ')} />
+                      <span className={['text-xs font-semibold', aiMode === 'cloud' ? 'text-zinc-200' : 'text-zinc-400'].join(' ')}>
+                        Cloud AI
+                      </span>
+                      <span className="ml-1 px-1 py-0.5 rounded text-[9px] font-semibold bg-blue-500/20 text-blue-400 uppercase tracking-wide">
+                        Recommended
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-zinc-600 leading-snug">
+                      Powered by OpenAI · no local setup required
+                    </p>
+                  </button>
+
+                  {/* Local Ollama option */}
+                  <button
+                    onClick={() => handleAiModeChange('ollama')}
+                    className={[
+                      'flex-1 flex flex-col items-start gap-1 px-3 py-3 rounded-xl border transition-all text-left',
+                      aiMode === 'ollama'
+                        ? 'border-blue-500/40 bg-blue-600/10'
+                        : 'border-white/[0.07] bg-white/[0.02] hover:bg-white/[0.04]'
+                    ].join(' ')}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <div className={['w-1.5 h-1.5 rounded-full shrink-0', aiMode === 'ollama' ? 'bg-blue-400' : 'bg-zinc-600'].join(' ')} />
+                      <span className={['text-xs font-semibold', aiMode === 'ollama' ? 'text-zinc-200' : 'text-zinc-400'].join(' ')}>
+                        Local AI
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-zinc-600 leading-snug">
+                      Via Ollama · stays on your Mac
+                    </p>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Ollama controls (only shown when Local AI is selected) */}
+            {aiEnabled && aiMode === 'ollama' && (
               <>
                 {/* Checking */}
                 {ollamaStatus === 'checking' && (

@@ -460,6 +460,18 @@ function AppShell() {
     })
   }, [allCleanable])
 
+  /** Select or deselect a batch of entries from the list panel. */
+  const handleBatchToggle = useCallback((entries: DiskEntry[], select: boolean) => {
+    setSelectedPaths((prev) => {
+      const next = new Map(prev)
+      for (const entry of entries) {
+        if (select) next.set(entry.path, entry)
+        else next.delete(entry.path)
+      }
+      return next
+    })
+  }, [])
+
   /** Called by SmartCleanPanel to merge leftover DiskEntries into the main selection. */
   const handleAddLeftoversToSelection = useCallback((entries: DiskEntry[]) => {
     setSelectedPaths((prev) => {
@@ -530,7 +542,9 @@ function AppShell() {
 
   const selectedEntries = [...selectedPaths.values()]
   const selectedPathsSet = useMemo(() => new Set(selectedPaths.keys()), [selectedPaths])
-  const showSelectionBar = selectedEntries.length > 0 && !smartCleanOpen
+  // Only show the full-width bar outside the treemap view; inside the treemap
+  // the compact bar lives at the bottom of the left panel.
+  const showSelectionBar = selectedEntries.length > 0 && !smartCleanOpen && scanPhase !== 'active'
 
   // In quick scan, cleanable entries can span multiple roots (~/Library, ~/Downloads,
   // custom absolute paths). Use homeDir as the common ancestor so buildCleanableTree
@@ -561,6 +575,10 @@ function AppShell() {
               onNavigate={handleNavigate}
               onContextMenu={handleContextMenu}
               onToggleSelect={handleSelectEntry}
+              onBatchToggle={handleBatchToggle}
+              selectedEntries={selectedEntries}
+              onDeselect={() => setSelectedPaths(new Map())}
+              onContinue={handleOpenDeleteReview}
             />
           ) : (
             /* Welcome screen — visible until the first scan animates it away */

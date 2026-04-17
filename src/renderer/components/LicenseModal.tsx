@@ -46,7 +46,24 @@ export function LicenseModal({ license, onClose, onUpgrade, onActivate, onDeacti
     if (result.ok) {
       onClose()
     } else {
-      setError(result.error)
+      // Map raw API/network errors to user-friendly messages
+      const raw = result.error.toLowerCase()
+      if (
+        raw.includes('not found') ||
+        raw.includes('invalid') ||
+        raw.includes('does not exist') ||
+        raw.includes('key')
+      ) {
+        setError('Invalid license key. Please check your key and try again.')
+      } else if (raw.includes('already activated') || raw.includes('limit')) {
+        setError('This license has reached its activation limit. Deactivate it on another Mac first.')
+      } else if (raw.includes('expired') || raw.includes('suspend') || raw.includes('disabled')) {
+        setError('This license is no longer active. Please renew or contact support.')
+      } else if (raw.includes('network') || raw.includes('fetch') || raw.includes('econnrefused')) {
+        setError('Could not reach the license server. Check your internet connection and try again.')
+      } else {
+        setError('Invalid license key. Please check your key and try again.')
+      }
     }
   }
 

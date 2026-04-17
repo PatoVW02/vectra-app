@@ -109,4 +109,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getLicense: () => ipcRenderer.invoke('license:get') as Promise<import('../renderer/types').LicenseInfo>,
   activateLicense: (key: string) => ipcRenderer.invoke('license:activate', key),
   deactivateLicense: () => ipcRenderer.invoke('license:deactivate'),
+
+  // ── AI mode ───────────────────────────────────────────────────────────────
+  getAiMode: () => ipcRenderer.invoke('get-ai-mode') as Promise<'cloud' | 'ollama'>,
+  setAiMode: (mode: 'cloud' | 'ollama') => ipcRenderer.send('set-ai-mode', mode),
 })

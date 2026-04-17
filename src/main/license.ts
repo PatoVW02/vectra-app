@@ -1,12 +1,46 @@
 import { net, app } from 'electron'
 import { readFileSync, writeFileSync, unlinkSync } from 'node:fs'
+import { createHmac } from 'node:crypto'
 import * as path from 'node:path'
 import * as os from 'node:os'
 
 // ─── Lemon Squeezy config ─────────────────────────────────────────────────────
-// After creating your Lemon Squeezy store + products, fill these in:
 // https://docs.lemonsqueezy.com/api/license-keys
 const LS_API = 'https://api.lemonsqueezy.com/v1/licenses'
+
+// Numeric variant IDs from the LS dashboard — used to reliably tell subscription
+// apart from lifetime when expires_at and subscription_id are both absent/null.
+// Find them at: LemonSqueezy dashboard → Products → <product> → Variants → ID column.
+const env = (import.meta as unknown as { env: Record<string, string> }).env
+const MONTHLY_VARIANT_ID = env.VITE_MONTHLY_VARIANT_ID ? Number(env.VITE_MONTHLY_VARIANT_ID) : null
+const LIFETIME_VARIANT_ID = env.VITE_LIFETIME_VARIANT_ID ? Number(env.VITE_LIFETIME_VARIANT_ID) : null
+
+/** Determine subscription vs lifetime from a LemonSqueezy API response meta object. */
+function detectLicenseType(meta: {
+  variant_id?: number | null
+  variant_name?: string | null
+  subscription_id?: number | null
+} | undefined, licenseKey: {
+  expires_at?: string | null
+} | undefined): 'subscription' | 'lifetime' {
+  const variantId = meta?.variant_id ?? null
+
+  // 1. Variant ID match against configured IDs — most reliable
+  if (variantId !== null && MONTHLY_VARIANT_ID !== null && variantId === MONTHLY_VARIANT_ID) return 'subscription'
+  if (variantId !== null && LIFETIME_VARIANT_ID !== null && variantId === LIFETIME_VARIANT_ID) return 'lifetime'
+
+  // 2. subscription_id in meta — present for subscription purchases on some LS configs
+  if (meta?.subscription_id != null) return 'subscription'
+
+  // 3. expires_at on the license key — set to renewal date on some LS configs
+  if (licenseKey?.expires_at != null) return 'subscription'
+
+  // 4. variant_name keyword match — last resort
+  const variantName = (meta?.variant_name ?? '').toLowerCase()
+  if (/month|year|annual|week|subscript/.test(variantName)) return 'subscription'
+
+  return 'lifetime'
+}
 
 // How many days the app works offline after last successful validation
 const GRACE_PERIOD_DAYS = 7
@@ -20,6 +54,7 @@ interface LicenseFile {
   customerEmail: string | null
   expiresAt: string | null
   lastValidated: string   // ISO date
+  sig?: string            // HMAC-SHA256 of the above fields — tamper detection
 }
 
 export interface LicenseInfo {
@@ -36,16 +71,42 @@ function getLicensePath(): string {
   return path.join(app.getPath('userData'), 'license.json')
 }
 
+// ─── HMAC tamper protection ───────────────────────────────────────────────────
+// The key is derived from the app name + version (deterministic, not on disk).
+// This blocks casual text-editor tampering; server revalidation is the real gate.
+function getHmacKey(): string {
+  return `${app.name}:${app.getVersion()}`
+}
+
+function computeSig(data: Omit<LicenseFile, 'sig'>): string {
+  const payload = JSON.stringify({
+    key: data.key,
+    instanceId: data.instanceId,
+    licenseType: data.licenseType,
+    status: data.status,
+    customerEmail: data.customerEmail,
+    expiresAt: data.expiresAt,
+    lastValidated: data.lastValidated,
+  })
+  return createHmac('sha256', getHmacKey()).update(payload).digest('hex')
+}
+
 function loadFile(): LicenseFile | null {
   try {
-    return JSON.parse(readFileSync(getLicensePath(), 'utf-8')) as LicenseFile
+    const parsed = JSON.parse(readFileSync(getLicensePath(), 'utf-8')) as LicenseFile
+    const { sig, ...rest } = parsed
+    // Reject missing or invalid signatures — file was tampered with
+    if (!sig || sig !== computeSig(rest)) return null
+    return rest
   } catch {
     return null
   }
 }
 
 function saveFile(data: LicenseFile): void {
-  writeFileSync(getLicensePath(), JSON.stringify(data, null, 2), 'utf-8')
+  const { sig: _discard, ...rest } = data
+  const sig = computeSig(rest)
+  writeFileSync(getLicensePath(), JSON.stringify({ ...rest, sig }, null, 2), 'utf-8')
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -65,7 +126,18 @@ function withinGrace(lastValidated: string): boolean {
 export function getLicenseInfo(): LicenseInfo {
   const f = loadFile()
   if (!f) return { active: false, licenseType: null, maskedKey: null, customerEmail: null, expiresAt: null, lastValidated: null }
-  const active = f.status === 'active' && withinGrace(f.lastValidated)
+
+  // Subscriptions: treat as expired once expiresAt passes + 2-day grace window.
+  // The buffer covers: being offline when renewal posts, clock skew, and the user
+  // renewing just before expiry but not yet having revalidated online.
+  // revalidateLicense() on next online startup refreshes expiresAt automatically.
+  const EXPIRY_GRACE_MS = 2 * 86_400_000  // 2 days
+  const subscriptionExpired =
+    f.licenseType === 'subscription' &&
+    f.expiresAt != null &&
+    new Date(f.expiresAt).getTime() + EXPIRY_GRACE_MS < Date.now()
+
+  const active = !subscriptionExpired && f.status === 'active' && withinGrace(f.lastValidated)
   return {
     active,
     licenseType: f.licenseType,
@@ -95,7 +167,12 @@ export async function activateLicense(rawKey: string): Promise<
       error?: string
       license_key?: { status: string; expires_at: string | null }
       instance?: { id: string }
-      meta?: { variant_name?: string; customer_email?: string }
+      meta?: {
+        variant_id?: number | null
+        variant_name?: string
+        customer_email?: string
+        subscription_id?: number | null
+      }
     }
     const data = (await res.json()) as ActivateResponse
 
@@ -103,9 +180,7 @@ export async function activateLicense(rawKey: string): Promise<
       return { ok: false, error: data.error ?? `Activation failed (HTTP ${res.status})` }
     }
 
-    const variantName = (data.meta?.variant_name ?? '').toLowerCase()
-    const licenseType: 'subscription' | 'lifetime' =
-      variantName.includes('month') || variantName.includes('subscri') ? 'subscription' : 'lifetime'
+    const licenseType = detectLicenseType(data.meta, data.license_key)
 
     const file: LicenseFile = {
       key,
@@ -138,18 +213,21 @@ export async function revalidateLicense(): Promise<LicenseInfo> {
     type ValidateResponse = {
       valid?: boolean
       license_key?: { status: string; expires_at: string | null }
-      meta?: { variant_name?: string }
+      meta?: { variant_id?: number | null; variant_name?: string; subscription_id?: number | null }
     }
     const data = (await res.json()) as ValidateResponse
 
-    const variantName = (data.meta?.variant_name ?? '').toLowerCase()
+    // Use the same priority chain as activateLicense.
+    // If no signal fires (e.g. no variant IDs configured and all other fields null),
+    // keep the cached licenseType so we don't accidentally downgrade a subscription.
+    const detectedType = detectLicenseType(data.meta, data.license_key)
+    const licenseType: 'subscription' | 'lifetime' =
+      detectedType === 'subscription' ? 'subscription' : f.licenseType
+
     const updated: LicenseFile = {
       ...f,
       status: data.valid && data.license_key?.status === 'active' ? 'active' : 'inactive',
-      licenseType:
-        variantName.includes('month') || variantName.includes('subscri')
-          ? 'subscription'
-          : f.licenseType,
+      licenseType,
       expiresAt: data.license_key?.expires_at ?? f.expiresAt,
       lastValidated: new Date().toISOString(),
     }

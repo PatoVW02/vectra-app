@@ -43,6 +43,8 @@ export interface VectraSettings {
   preferredOllamaModel: string | null
   onboardingComplete: boolean
   showDevDependencies: boolean
+  /** 'cloud' = OpenAI (default); 'ollama' = local Ollama */
+  aiMode: 'cloud' | 'ollama'
   /** Folder names (relative to ~/Library) included in Quick Scan mode. */
   quickScanFolders: string[]
   /** Absolute paths the user has added via the folder picker. */
@@ -143,6 +145,10 @@ declare global {
       getLicense: () => Promise<LicenseInfo>
       activateLicense: (key: string) => Promise<{ ok: true; info: LicenseInfo } | { ok: false; error: string }>
       deactivateLicense: () => Promise<void>
+
+      // AI mode
+      getAiMode: () => Promise<'cloud' | 'ollama'>
+      setAiMode: (mode: 'cloud' | 'ollama') => void
     }
   }
 }
