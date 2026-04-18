@@ -13,6 +13,7 @@ interface SettingsPanelProps {
   license: LicenseInfo | null
   onUpgrade: () => void
   onLicense: () => void
+  onWhatsNew: () => void
 }
 
 function PremiumLock({ onUpgrade }: { onUpgrade: () => void }) {
@@ -146,7 +147,7 @@ function Toggle({ on, onClick, disabled }: { on: boolean; onClick: () => void; d
   )
 }
 
-export function SettingsPanel({ onClose, onDevDepsChange, quickScanFolders, onQuickScanFoldersChange, isPremium, license, onUpgrade, onLicense }: SettingsPanelProps) {
+export function SettingsPanel({ onClose, onDevDepsChange, quickScanFolders, onQuickScanFoldersChange, isPremium, license, onUpgrade, onLicense, onWhatsNew }: SettingsPanelProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>('general')
   const [settings, setSettings] = useState<VectraSettings | null>(null)
   const [saving, setSaving] = useState(false)
@@ -1115,14 +1116,25 @@ export function SettingsPanel({ onClose, onDevDepsChange, quickScanFolders, onQu
                 </button>
               )}
               {appVersion && (
-                <p className="text-xs text-zinc-600 mt-2 flex items-center gap-2">
-                  Current version: {appVersion}
-                  {appArch && (
-                    <span className="px-1.5 py-0.5 rounded text-zinc-500 bg-zinc-800 text-[10px] font-mono tracking-wide">
-                      {appArch === 'arm64' ? 'Apple Silicon' : appArch === 'x64' ? 'Intel' : appArch}
-                    </span>
-                  )}
-                </p>
+                <div className="mt-2 flex items-center gap-2 flex-wrap">
+                  <p className="text-xs text-zinc-600 flex items-center gap-2">
+                    Current version: {appVersion}
+                    {appArch && (
+                      <span className="px-1.5 py-0.5 rounded text-zinc-500 bg-zinc-800 text-[10px] font-mono tracking-wide">
+                        {appArch === 'arm64' ? 'Apple Silicon' : appArch === 'x64' ? 'Intel' : appArch}
+                      </span>
+                    )}
+                  </p>
+                  <button
+                    onClick={onWhatsNew}
+                    className="flex items-center gap-1 text-[11px] text-blue-400 hover:text-blue-300 transition-colors"
+                  >
+                    <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M5 2a1 1 0 011 1v1h1a1 1 0 010 2H6v1a1 1 0 01-2 0V6H3a1 1 0 010-2h1V3a1 1 0 011-1zm0 10a1 1 0 011 1v1h1a1 1 0 110 2H6v1a1 1 0 11-2 0v-1H3a1 1 0 110-2h1v-1a1 1 0 011-1zM12 2a1 1 0 01.967.744L14.146 7.2 17.5 9.134a1 1 0 010 1.732l-3.354 1.935-1.18 4.455a1 1 0 01-1.933 0L9.854 12.8 6.5 10.866a1 1 0 010-1.732l3.354-1.935 1.18-4.455A1 1 0 0112 2z" clipRule="evenodd" />
+                    </svg>
+                    What's New
+                  </button>
+                </div>
               )}
             </div>
           </div>

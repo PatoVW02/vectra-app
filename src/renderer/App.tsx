@@ -18,6 +18,7 @@ import { OnboardingFlow } from './components/OnboardingFlow'
 import { useLicense } from './hooks/useLicense'
 import { UpgradeModal } from './components/UpgradeModal'
 import { LicenseModal } from './components/LicenseModal'
+import { WhatsNewModal } from './components/WhatsNewModal'
 
 interface ContextMenuState {
   entry: DiskEntry
@@ -107,6 +108,17 @@ function AppShell() {
   const { license, isPremium, activate, deactivate } = useLicense()
   const [upgradeOpen, setUpgradeOpen] = useState(false)
   const [licenseOpen, setLicenseOpen] = useState(false)
+  const [whatsNewOpen, setWhatsNewOpen] = useState(false)
+  const [appVersion, setAppVersion] = useState<string | null>(null)
+
+  // Show What's New once per app version (tracked in localStorage).
+  useEffect(() => {
+    window.electronAPI.getAppVersion().then((version) => {
+      setAppVersion(version)
+      const lastSeen = localStorage.getItem('vectra:lastSeenWhatsNewVersion')
+      if (lastSeen !== version) setWhatsNewOpen(true)
+    }).catch(() => {})
+  }, [])
 
   // Independent panel states — both can be open simultaneously
   const [infoPanelEntry, setInfoPanelEntry] = useState<DiskEntry | null>(null)
@@ -808,6 +820,7 @@ function AppShell() {
           license={license}
           onUpgrade={() => setUpgradeOpen(true)}
           onLicense={() => setLicenseOpen(true)}
+          onWhatsNew={() => setWhatsNewOpen(true)}
         />
       )}
 
@@ -830,6 +843,16 @@ function AppShell() {
           }}
           onActivate={activate}
           onDeactivate={deactivate}
+        />
+      )}
+      {whatsNewOpen && (
+        <WhatsNewModal
+          version={appVersion ?? undefined}
+          onClose={() => {
+            setWhatsNewOpen(false)
+            // Mark this version as seen so auto-show doesn't trigger again until next update
+            if (appVersion) localStorage.setItem('vectra:lastSeenWhatsNewVersion', appVersion)
+          }}
         />
       )}
     </div>
