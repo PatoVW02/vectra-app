@@ -1,7 +1,7 @@
 {
   "releases": [
     {
-      "version": "1.2.2",
+      "version": "1.2.4",
       "date": "April 2026",
       "description": "This update brings cloud-powered AI analysis, tighter license security, and a handful of polish fixes to the menu bar and scan engine.",
       "items": [
