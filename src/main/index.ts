@@ -66,7 +66,7 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
-  electronApp.setAppUserModelId('com.patricio.vectra')
+  electronApp.setAppUserModelId('com.patricio.nerion')
 
   // Mark all real app quits so close handlers don't hide to tray.
   app.on('before-quit', () => setQuitting())

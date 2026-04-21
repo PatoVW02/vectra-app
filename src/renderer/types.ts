@@ -36,7 +36,7 @@ export interface OllamaModel {
   size: number
 }
 
-export interface VectraSettings {
+export interface NerionSettings {
   backgroundScan: BackgroundScanSettings
   showMenuBarIcon: boolean
   autoUpdateEnabled: boolean
@@ -113,11 +113,11 @@ declare global {
       openExternal: (url: string) => Promise<void>
 
       // Settings & background scan
-      getSettings: () => Promise<VectraSettings>
+      getSettings: () => Promise<NerionSettings>
       getHomeDir: () => Promise<string>
       getAppVersion: () => Promise<string>
       getAppArch: () => Promise<string>
-      saveSettings: (settings: VectraSettings) => Promise<void>
+      saveSettings: (settings: NerionSettings) => Promise<void>
       runBgScanNow: () => Promise<void>
       updateLastScanPath: (path: string) => void
       notifyManualScanDone: (foundKB: number) => void

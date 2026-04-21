@@ -19,7 +19,7 @@ TAG="v${VERSION}"
 TMP=$(mktemp -d)
 trap 'rm -rf "${TMP}"' EXIT
 
-echo "▶ Building Vectra ${TAG}"
+echo "▶ Building Nerion ${TAG}"
 
 # Build renderer/main JS once (arch-independent)
 npm run build

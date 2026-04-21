@@ -5,7 +5,7 @@ import { stat, readdir } from 'node:fs/promises'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { scanDirectoryStreaming } from './scanner'
-import { loadSettings, saveSettings, patchSettings, VectraSettings } from './settings'
+import { loadSettings, saveSettings, patchSettings, NerionSettings } from './settings'
 import { rebuildTrayMenu, scheduleBackgroundScan, stopBackgroundScan, runBackgroundScan, updateLastScanPath, setTrayVisibility, testNotification } from './background'
 import { getLicenseInfo, activateLicense, revalidateLicense, deactivateLicense } from './license'
 import { runAutoUpdateCheck, installDownloadedUpdateNow } from './updater'
@@ -253,80 +253,110 @@ const LEFTOVER_LOCATIONS = [
   path.join('Library', 'Preferences'),  // .plist files
 ]
 
-// Items starting with these are always system/Apple-owned — never flag them
+// Prefixes that unconditionally mark a Library entry as system/Apple-owned.
+// These never appear as app leftovers regardless of what's installed.
 const SYSTEM_PREFIXES = [
-  'com.apple.', 'com.apple', 'apple',
-  'systempreferences', 'loginitems', 'screensavers', 'savedapplicationstate',
-  // Python runtimes (covers python2.x, python3.x, pythonXY, etc.)
+  'com.apple.',
+  // macOS UI server and core daemons write to Library under their own name
+  'systemuiserver', 'loginwindow', 'notificationcenter', 'usernoted',
+  'sharingd', 'coreaudiod', 'corebluetooth', 'coreduet',
+  'findmydevice', 'cloudd', 'bird', 'rapportd',
+  // Crash / diagnostic infrastructure
+  'crashreporter', 'diagnosticreportingservice', 'submissionservice',
+  // Python runtimes — any version
   'python',
-  // Symbol caches used by Xcode / developer tools
+  // Symbol caches (Xcode / Instruments)
   'symbolsource',
+  // Common helper/agent suffix patterns that indicate spawned sub-processes, not apps
+  // (handled by suffix check in isKnownApp rather than prefix here)
 ]
 
-// Apple-branded apps and services whose Library data should never be flagged,
-// even if the .app is not present in the standard scan directories.
+// Apple-branded app names whose Library data must never be flagged as leftovers.
+// Covers apps that may not carry a com.apple. bundle prefix (e.g. MAS purchases,
+// beta builds, apps renamed across OS versions).
 const APPLE_APP_NAMES = new Set([
   // Developer tools
-  'xcode', 'instruments', 'simulator', 'iphonesimulator', 'realitycomposer', 'createml',
-  'swift', 'swiftpm',
-  // Pro media apps
-  'garageband', 'logic', 'logicpro', 'finalcut', 'imovie', 'motion', 'compressor',
-  'mainstage', 'soundtrack',
+  'xcode', 'instruments', 'simulator', 'iphonesimulator', 'tvossimulator',
+  'realitycomposer', 'createml', 'swift', 'swiftpm', 'xcodeextensionservice',
+  // Pro media & creative
+  'garageband', 'logic', 'logicpro', 'finalcut', 'imovie', 'motion',
+  'compressor', 'mainstage', 'soundtrack',
   // iWork
   'pages', 'numbers', 'keynote',
-  // System apps
+  // Core system apps
   'itunes', 'music', 'podcasts', 'books', 'ibooks', 'news', 'stocks',
   'photos', 'facetime', 'messages', 'mail', 'notes', 'reminders',
-  'calendar', 'contacts', 'maps', 'shortcuts', 'automator',
-  // iCloud / system services
-  'icloud', 'mobiledocuments', 'clouddocs', 'cloudkit',
+  'calendar', 'contacts', 'maps', 'shortcuts', 'automator', 'scripteditor',
+  'voicememos', 'freeform', 'journal', 'chess', 'textedit', 'preview',
+  'quicklookd', 'quicklookuiservice',
+  // iCloud / system background services
+  'icloud', 'mobiledocuments', 'clouddocs', 'cloudkit', 'mobilesync',
+  'mobiledevice', 'itunessync',
   // System UI / OS features
-  'animoji', 'networkserviceproxy',
-  // Developer / symbol caching
-  'symbolsourcesymbols',
-  // Python runtimes and virtual environments (installed by python.org or brew)
-  'python', 'python3', 'python3.9', 'python3.10', 'python3.11', 'python3.12', 'python3.13',
-  'virtualenv', 'virtualenvs', 'venv',
-  // This app — never recommend deleting Vectra's own data
-  'vectra',
-  // Firebase / Google services
-  'firestore',
-  // Developer tools and version managers — never flagged even when not a .app
-  'copilot', 'github', 'github-copilot', 'githubcopilot',
-  'nvm', 'rbenv', 'pyenv', 'asdf', 'mise',
+  'animoji', 'networkserviceproxy', 'storeaccountd', 'storeassetd',
+  'akd', 'trustd', 'secd', 'apsd', 'dasd', 'assertiond',
+  // Safari and WebKit
+  'safari', 'webkit', 'safariextensionservice',
+  // Accessibility
+  'voiceover', 'accessibility',
+  // Python runtimes and virtual envs (python.org, brew, conda)
+  'python', 'python3', 'pip', 'conda', 'anaconda', 'miniconda',
+  'virtualenv', 'virtualenvs', 'venv', 'pyenv',
+  // This app — never recommend deleting Nerion's own data
+  'nerion',
+  // Firebase / Google infrastructure
+  'firestore', 'firebase',
+  // Developer tools and version managers — data is always valid
+  'copilot', 'github', 'githubcopilot',
+  'nvm', 'rbenv', 'asdf', 'mise',
   'homebrew', 'linuxbrew',
-  'npm', 'yarn', 'pnpm',
-  'rustup', 'cargo',
-  // VS Code and extensions — data is valid as long as VS Code itself is installed
-  'code', 'vscode', 'visual', 'cursor', 'windsurf',
+  'npm', 'yarn', 'pnpm', 'bun',
+  'rustup', 'cargo', 'rust',
+  'golang', 'gopath',
+  'ruby', 'rbenv', 'rvm', 'gem', 'bundler',
+  'node', 'nodejs', 'deno',
+  // VS Code family — data is valid as long as the editor is installed
+  'code', 'vscode', 'visual', 'cursor', 'windsurf', 'zed',
+  // Package managers / build tools that write to Library
+  'cocoapods', 'pods', 'carthage',
+  'gradle', 'maven', 'sbt',
 ])
 
 function addWords(ids: Set<string>, text: string) {
-  // Add the full string plus every meaningful word (split on spaces and dots, min 4 chars)
+  // Always index the full string as-is
   ids.add(text)
-  for (const word of text.split(/[\s.]+/)) {
-    if (word.length >= 4) ids.add(word)
+  // Index each segment split on non-alphanumeric runs, min 5 chars to avoid noise
+  // (e.g. 'com.google.chrome' → 'google', 'chrome'; NOT 'com' which is too generic)
+  for (const word of text.split(/[\s.\-_]+/)) {
+    if (word.length >= 5) ids.add(word)
   }
 }
 
 async function getInstalledAppIdentifiers(): Promise<Set<string>> {
   const ids = new Set<string>()
   const home = os.homedir()
-  const appDirs = ['/Applications', path.join(home, 'Applications'), '/System/Applications']
 
+  // ── 1. Installed .app bundles ────────────────────────────────────────────────
+  // Scan standard app locations plus Setapp (if present).
+  const appDirs = [
+    '/Applications',
+    '/System/Applications',
+    '/System/Applications/Utilities',
+    path.join(home, 'Applications'),
+    '/Applications/Setapp',          // Setapp subscription apps
+    path.join(home, 'Applications', 'Setapp'),
+  ]
   await Promise.allSettled(
     appDirs.map(async (dir) => {
       try {
         const entries = await readdir(dir)
         const apps = entries.filter((n) => n.endsWith('.app'))
         await Promise.allSettled(
-          apps.map(async (app) => {
-            // Add display name and each meaningful word in it
-            const displayName = app.replace(/\.app$/, '').toLowerCase()
+          apps.map(async (appName) => {
+            const displayName = appName.replace(/\.app$/, '').toLowerCase()
             addWords(ids, displayName)
 
-            // Try to extract bundle identifier via plutil
-            const plistPath = path.join(dir, app, 'Contents', 'Info.plist')
+            const plistPath = path.join(dir, appName, 'Contents', 'Info.plist')
             try {
               const { stdout } = await execFileAsync(
                 'plutil',
@@ -334,12 +364,9 @@ async function getInstalledAppIdentifiers(): Promise<Set<string>> {
                 { timeout: 1500 }
               )
               const bundleId = stdout.trim().toLowerCase()
-              if (bundleId) {
-                // Add full bundle ID and every segment
-                addWords(ids, bundleId)
-              }
+              if (bundleId) addWords(ids, bundleId)
             } catch {
-              // plutil not available or plist malformed — display name words are enough
+              // plutil unavailable or plist missing — display name words are enough
             }
           })
         )
@@ -349,25 +376,85 @@ async function getInstalledAppIdentifiers(): Promise<Set<string>> {
     })
   )
 
-  // Also scan VS Code extensions so their Application Support data is never flagged.
-  // Extension folders are named: {publisher}.{name}-{version}  e.g. github.copilot-1.181.0
-  const vscodeExtDirs = [
+  // ── 2. ~/Library/Containers ─────────────────────────────────────────────────
+  // The most authoritative source: macOS ONLY creates a container for a sandboxed
+  // app that has actually been run on this machine. Every folder name here is the
+  // exact bundle ID of an installed (or recently uninstalled but still present) app.
+  // We include these because the user consciously ran these apps — their Library
+  // data is not an orphan even if the .app has been moved outside /Applications.
+  try {
+    const containers = await readdir(path.join(home, 'Library', 'Containers'))
+    for (const c of containers) addWords(ids, c.toLowerCase())
+  } catch { /* directory missing or unreadable */ }
+
+  // ── 3. ~/Library/Group Containers ───────────────────────────────────────────
+  // Group containers are shared between a primary app and its extensions / helpers.
+  // Their existence indicates the owning app group is active.
+  try {
+    const gcs = await readdir(path.join(home, 'Library', 'Group Containers'))
+    for (const gc of gcs) addWords(ids, gc.toLowerCase())
+  } catch { /* directory missing */ }
+
+  // ── 4. Homebrew Cask installs ────────────────────────────────────────────────
+  // Cask names often don't match the .app display name (e.g. "google-chrome" ≠ "Google Chrome").
+  // The cask folder name is the canonical identifier we index here.
+  const caskRoots = ['/opt/homebrew/Caskroom', '/usr/local/Caskroom']
+  for (const root of caskRoots) {
+    try {
+      const casks = await readdir(root)
+      for (const c of casks) addWords(ids, c.toLowerCase())
+    } catch { /* not present on this machine */ }
+  }
+
+  // ── 5. LaunchAgent / LaunchDaemon plists ────────────────────────────────────
+  // Background services installed by apps write .plist files here. The filename
+  // (without extension) is the service label, which is usually the bundle ID prefix.
+  // Including these prevents flagging e.g. "com.dropbox.DropboxMacUpdate" Library data.
+  const launchDirs = [
+    path.join(home, 'Library', 'LaunchAgents'),
+    '/Library/LaunchAgents',
+    '/Library/LaunchDaemons',
+  ]
+  for (const launchDir of launchDirs) {
+    try {
+      const plists = await readdir(launchDir)
+      for (const p of plists.filter(n => n.endsWith('.plist'))) {
+        addWords(ids, p.replace(/\.plist$/, '').toLowerCase())
+      }
+    } catch { /* directory missing or unreadable */ }
+  }
+
+  // ── 6. Preference panes ──────────────────────────────────────────────────────
+  const prefPaneDirs = [
+    path.join(home, 'Library', 'PreferencePanes'),
+    '/Library/PreferencePanes',
+  ]
+  for (const ppDir of prefPaneDirs) {
+    try {
+      const panes = await readdir(ppDir)
+      for (const p of panes.filter(n => n.endsWith('.prefPane'))) {
+        addWords(ids, p.replace(/\.prefPane$/, '').toLowerCase())
+      }
+    } catch { /* directory missing */ }
+  }
+
+  // ── 7. VS Code–family extension publishers ───────────────────────────────────
+  // Extension dirs are named {publisher}.{name}-{semver}. We strip the version
+  // and index the publisher and extension name so their Application Support data
+  // is never flagged.
+  const editorExtDirs = [
     path.join(home, '.vscode', 'extensions'),
     path.join(home, '.cursor', 'extensions'),
     path.join(home, '.windsurf', 'extensions'),
   ]
   await Promise.allSettled(
-    vscodeExtDirs.map(async (extDir) => {
+    editorExtDirs.map(async (extDir) => {
       try {
         const entries = await readdir(extDir)
         for (const name of entries) {
-          // Strip the trailing version segment (last -semver) to get publisher.extname
-          const withoutVersion = name.replace(/-\d+\.\d+.*$/, '').toLowerCase()
-          addWords(ids, withoutVersion)
+          addWords(ids, name.replace(/-\d+\.\d+.*$/, '').toLowerCase())
         }
-      } catch {
-        // directory does not exist or not readable
-      }
+      } catch { /* directory missing */ }
     })
   )
 
@@ -375,36 +462,54 @@ async function getInstalledAppIdentifiers(): Promise<Set<string>> {
 }
 
 function isKnownApp(itemName: string, installedIds: Set<string>): boolean {
-  // Strip .plist extension and lowercase for uniform comparison
-  const name = itemName.toLowerCase().replace(/\.plist$/, '')
+  // Normalise: strip common extensions and lowercase
+  const name = itemName.toLowerCase()
+    .replace(/\.plist$/, '')
+    .replace(/\.prefpane$/, '')
+
   if (!name) return true
 
-  // Always skip system/Apple-owned items by prefix
+  // ── System prefix check ───────────────────────────────────────────────────
   for (const prefix of SYSTEM_PREFIXES) {
     if (name.startsWith(prefix)) return true
   }
 
-  // Always skip known Apple app names and their words
+  // ── Apple app name check (exact + word-level) ─────────────────────────────
   if (APPLE_APP_NAMES.has(name)) return true
-  // Also check if any word in a bundle-ID-style name matches an Apple app
-  // e.g. "com.apple.garageband10" → already caught by com.apple prefix
-  // e.g. "GarageBand" → caught above
-  for (const word of name.split(/[\s.]+/)) {
-    if (word.length >= 4 && APPLE_APP_NAMES.has(word)) return true
+  for (const word of name.split(/[\s.\-_]+/)) {
+    if (word.length >= 5 && APPLE_APP_NAMES.has(word)) return true
   }
 
-  // Exact match against installed app identifiers (display names, bundle IDs, words)
+  // ── Common helper/agent/daemon suffix patterns ────────────────────────────
+  // Sub-process executables (e.g. "com.x.helper", "com.x.updater") always belong
+  // to an installed app — they are never standalone orphans.
+  const HELPER_SUFFIXES = ['.helper', '.agent', '.daemon', '.launcher',
+    '.updater', '.crashreporter', '.xpc', '.loginhelper']
+  for (const suf of HELPER_SUFFIXES) {
+    if (name.endsWith(suf)) return true
+  }
+
+  // ── Exact match against installed identifiers ─────────────────────────────
   if (installedIds.has(name)) return true
 
-  // For bundle-ID style names: check every dot-segment individually
+  // ── Segment-level match for bundle-ID–style names ─────────────────────────
+  // "com.google.chrome" → segments: ['google', 'chrome']
+  // "B8234FKSHK.com.tapbots.Tweetbot3" → MAS prefix + real bundle ID
   if (name.includes('.')) {
-    for (const segment of name.split('.')) {
-      if (segment.length >= 4 && installedIds.has(segment)) return true
+    const segments = name.split('.')
+    for (const seg of segments) {
+      if (seg.length >= 5 && installedIds.has(seg)) return true
     }
-    // Prefix match: "com.google.chrome.helper" → matches "com.google.chrome"
+    // Prefix/suffix match: "com.google.chrome.helper" ↔ "com.google.chrome"
     for (const id of installedIds) {
-      if (name.startsWith(id + '.') || id.startsWith(name + '.')) return true
+      if (id.length >= 5 && (name.startsWith(id + '.') || id.startsWith(name + '.'))) return true
     }
+  }
+
+  // ── Substring match for display-name–style folders ────────────────────────
+  // "Adobe Photoshop 2024" → every 5-char-or-longer word checked
+  for (const word of name.split(/[\s.\-_]+/)) {
+    if (word.length >= 5 && installedIds.has(word)) return true
   }
 
   return false
@@ -415,6 +520,34 @@ export interface AppLeftover {
   name: string
   sizeKB: number
   location: string  // e.g. "Application Support"
+}
+
+/**
+ * Recursively sum the size of all files under `entryPath` using only Node.js
+ * fs APIs — no child processes. This avoids macOS TCC prompts that appear when
+ * external binaries (e.g. `du`) access protected directories like ~/Library/Containers,
+ * because TCC grants are per-binary and Electron's grant is not inherited by spawned processes.
+ *
+ * A deadline short-circuits the walk so deeply nested trees don't stall the scan.
+ */
+async function getEntrySizeKB(entryPath: string, deadlineMs = Date.now() + 8000): Promise<number> {
+  let totalBytes = 0
+  async function walk(p: string): Promise<void> {
+    if (Date.now() > deadlineMs) return
+    try {
+      const s = await stat(p)
+      if (s.isDirectory()) {
+        const children = await readdir(p)
+        await Promise.all(children.map((c) => walk(path.join(p, c))))
+      } else {
+        totalBytes += s.size
+      }
+    } catch {
+      // permission denied or entry disappeared — skip
+    }
+  }
+  await walk(entryPath)
+  return Math.round(totalBytes / 1024)
 }
 
 async function findLeftoversInDir(
@@ -432,14 +565,9 @@ async function findLeftoversInDir(
         if (isKnownApp(name, installedIds)) return
 
         const fullPath = path.join(dirPath, name)
-        try {
-          const { stdout } = await execFileAsync('du', ['-sk', fullPath], { timeout: 8000 })
-          const sizeKB = parseInt(stdout.split('\t')[0], 10)
-          if (!isNaN(sizeKB) && sizeKB >= minSizeKB) {
-            results.push({ path: fullPath, name, sizeKB, location: locationLabel })
-          }
-        } catch {
-          // couldn't stat — skip
+        const sizeKB = await getEntrySizeKB(fullPath)
+        if (sizeKB >= minSizeKB) {
+          results.push({ path: fullPath, name, sizeKB, location: locationLabel })
         }
       })
     )
@@ -872,11 +1000,11 @@ What is this item and is it safe to delete?`
   ipcMain.handle('get-app-version', () => app.getVersion())
   ipcMain.handle('get-app-arch', () => process.arch)
 
-  ipcMain.handle('save-settings', (_event, settings: VectraSettings) => {
+  ipcMain.handle('save-settings', (_event, settings: NerionSettings) => {
     const prev = loadSettings()
     // Keep runtime-managed counters from the source of truth in main process,
     // so stale renderer state can't overwrite delete quota or scan history.
-    const mergedSettings: VectraSettings = {
+    const mergedSettings: NerionSettings = {
       ...settings,
       lastManualScanTime: prev.lastManualScanTime,
       lastManualScanFoundKB: prev.lastManualScanFoundKB,
@@ -915,7 +1043,7 @@ What is this item and is it safe to delete?`
     // and can fall back to opening System Settings manually.
     if (Notification.isSupported()) {
       new Notification({
-        title: 'Vectra',
+        title: 'Nerion',
         body: "You'll be notified when background scans find space to reclaim."
       }).show()
     }

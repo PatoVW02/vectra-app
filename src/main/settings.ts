@@ -11,7 +11,7 @@ export interface BackgroundScanSettings {
   lastScanResults: Array<{ path: string; name: string; sizeKB: number; isDir: boolean }>
 }
 
-export interface VectraSettings {
+export interface NerionSettings {
   backgroundScan: BackgroundScanSettings
   showMenuBarIcon: boolean
   autoUpdateEnabled: boolean
@@ -40,7 +40,7 @@ function currentMonthKey(): string {
   return `${now.getFullYear()}-${month}`
 }
 
-const DEFAULTS: VectraSettings = {
+const DEFAULTS: NerionSettings = {
   backgroundScan: {
     enabled: false,
     intervalHours: 168,
@@ -71,16 +71,16 @@ function settingsPath(): string {
   return join(app.getPath('userData'), 'settings.json')
 }
 
-export function loadSettings(): VectraSettings {
+export function loadSettings(): NerionSettings {
   try {
     const raw = readFileSync(settingsPath(), 'utf-8')
-    const parsed = JSON.parse(raw) as Partial<VectraSettings>
+    const parsed = JSON.parse(raw) as Partial<NerionSettings>
     const hasValidDeleteQuota =
       !!parsed.deleteQuota &&
       typeof parsed.deleteQuota.monthKey === 'string' &&
       Number.isFinite(parsed.deleteQuota.used)
 
-    const merged: VectraSettings = {
+    const merged: NerionSettings = {
       ...DEFAULTS,
       ...parsed,
       backgroundScan: { ...DEFAULTS.backgroundScan, ...parsed.backgroundScan },
@@ -108,16 +108,16 @@ export function loadSettings(): VectraSettings {
   }
 }
 
-export function saveSettings(next: VectraSettings): void {
+export function saveSettings(next: NerionSettings): void {
   const p = settingsPath()
   const dir = join(p, '..')
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
   writeFileSync(p, JSON.stringify(next, null, 2), 'utf-8')
 }
 
-export function patchSettings(patch: Partial<Omit<VectraSettings, 'backgroundScan'>> & { backgroundScan?: Partial<BackgroundScanSettings> }): VectraSettings {
+export function patchSettings(patch: Partial<Omit<NerionSettings, 'backgroundScan'>> & { backgroundScan?: Partial<BackgroundScanSettings> }): NerionSettings {
   const current = loadSettings()
-  const next: VectraSettings = {
+  const next: NerionSettings = {
     ...current,
     ...patch,
     backgroundScan: { ...current.backgroundScan, ...(patch.backgroundScan ?? {}) } as BackgroundScanSettings,

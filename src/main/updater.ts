@@ -76,18 +76,18 @@ function ensureUpdaterListeners(): void {
     downloadedUpdateReady = false
     const message = err instanceof Error ? err.message : String(err)
     broadcastUpdaterStatus({ type: 'error', message })
-    console.error('[Vectra] Auto-updater error:', err)
+    console.error('[Nerion] Auto-updater error:', err)
   })
 
   autoUpdater.on('update-available', (info) => {
     broadcastUpdaterStatus({ type: 'update-available', version: info.version })
-    console.log(`[Vectra] Update available: ${info.version}`)
+    console.log(`[Nerion] Update available: ${info.version}`)
   })
 
   autoUpdater.on('update-not-available', (info) => {
     downloadedUpdateReady = false
     broadcastUpdaterStatus({ type: 'update-not-available', version: info.version })
-    console.log(`[Vectra] No update available (provider): ${info.version}`)
+    console.log(`[Nerion] No update available (provider): ${info.version}`)
   })
 
   autoUpdater.on('download-progress', (progress) => {
@@ -103,7 +103,7 @@ function ensureUpdaterListeners(): void {
   autoUpdater.on('update-downloaded', (info) => {
     downloadedUpdateReady = true
     broadcastUpdaterStatus({ type: 'update-downloaded', version: info.version })
-    console.log(`[Vectra] Update downloaded: ${info.version}. Will install on app quit.`)
+    console.log(`[Nerion] Update downloaded: ${info.version}. Will install on app quit.`)
   })
 
   listenersRegistered = true
@@ -129,21 +129,21 @@ export async function runAutoUpdateCheck(reason: 'startup' | 'settings-enabled' 
     autoUpdater.channel = detectBuildArch()
     downloadedUpdateReady = false
 
-    console.log(`[Vectra] Auto-update check (${reason}): channel=${autoUpdater.channel}, checking from ${currentVersion}.`)
+    console.log(`[Nerion] Auto-update check (${reason}): channel=${autoUpdater.channel}, checking from ${currentVersion}.`)
     const result = await autoUpdater.checkForUpdates()
     const nextVersion = result?.updateInfo?.version
     if (!nextVersion || compareSemver(nextVersion, currentVersion) <= 0) {
-      console.log(`[Vectra] Auto-update check (${reason}): already up to date (${currentVersion}).`)
+      console.log(`[Nerion] Auto-update check (${reason}): already up to date (${currentVersion}).`)
       return false
     }
 
-    console.log(`[Vectra] Auto-update check (${reason}): ${currentVersion} -> ${nextVersion}.`)
+    console.log(`[Nerion] Auto-update check (${reason}): ${currentVersion} -> ${nextVersion}.`)
     return true
   } catch (err) {
     downloadedUpdateReady = false
     const message = err instanceof Error ? err.message : String(err)
     broadcastUpdaterStatus({ type: 'error', message })
-    console.error('[Vectra] Auto-update check failed:', err)
+    console.error('[Nerion] Auto-update check failed:', err)
     return false
   } finally {
     checkInFlight = false

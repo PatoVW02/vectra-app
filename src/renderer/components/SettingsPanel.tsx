@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
-import { VectraSettings, OllamaModel, LicenseInfo, UpdaterStatusEvent } from '../types'
+import { NerionSettings, OllamaModel, LicenseInfo, UpdaterStatusEvent } from '../types'
 import { formatSize } from '../utils/format'
 import { HeaderFrame } from './HeaderFrame'
 
@@ -149,7 +149,7 @@ function Toggle({ on, onClick, disabled }: { on: boolean; onClick: () => void; d
 
 export function SettingsPanel({ onClose, onDevDepsChange, quickScanFolders, onQuickScanFoldersChange, isPremium, license, onUpgrade, onLicense, onWhatsNew }: SettingsPanelProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>('general')
-  const [settings, setSettings] = useState<VectraSettings | null>(null)
+  const [settings, setSettings] = useState<NerionSettings | null>(null)
   const [saving, setSaving] = useState(false)
   const [scanningNow, setScanningNow] = useState(false)
   const [checkingForUpdates, setCheckingForUpdates] = useState(false)
@@ -165,7 +165,7 @@ export function SettingsPanel({ onClose, onDevDepsChange, quickScanFolders, onQu
   const [loginItem, setLoginItem] = useState<boolean | null>(null)
 
   // AI state
-  const [aiEnabled, setAiEnabled] = useState(() => localStorage.getItem('vectra:aiHidden') !== 'true')
+  const [aiEnabled, setAiEnabled] = useState(() => localStorage.getItem('nerion:aiHidden') !== 'true')
   const [aiMode, setAiMode] = useState<'cloud' | 'ollama'>('cloud')
   const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus>('idle')
   const [installedModels, setInstalledModels] = useState<OllamaModel[]>([])
@@ -175,7 +175,7 @@ export function SettingsPanel({ onClose, onDevDepsChange, quickScanFolders, onQu
   const [pullError, setPullError] = useState<string | null>(null)
 
   // Keep a ref so pull-done callback can access latest settings without stale closure
-  const settingsRef = useRef<VectraSettings | null>(null)
+  const settingsRef = useRef<NerionSettings | null>(null)
   settingsRef.current = settings
 
   useEffect(() => {
@@ -446,9 +446,9 @@ export function SettingsPanel({ onClose, onDevDepsChange, quickScanFolders, onQu
     const next = !aiEnabled
     setAiEnabled(next)
     if (next) {
-      localStorage.removeItem('vectra:aiHidden')
+      localStorage.removeItem('nerion:aiHidden')
     } else {
-      localStorage.setItem('vectra:aiHidden', 'true')
+      localStorage.setItem('nerion:aiHidden', 'true')
       setOllamaStatus('idle')
     }
   }
@@ -553,7 +553,7 @@ export function SettingsPanel({ onClose, onDevDepsChange, quickScanFolders, onQu
         <div className="rounded-xl bg-white/[0.03] border border-white/[0.06] divide-y divide-white/[0.04]">
           <div className="px-4 py-4 flex items-center justify-between">
             <div>
-              <p className="text-xs font-medium text-zinc-300">Vectra Premium</p>
+              <p className="text-xs font-medium text-zinc-300">Nerion Premium</p>
               <p className="text-[11px] text-zinc-600 mt-0.5">
                 {isPremium
                   ? `Active · ${license?.licenseType === 'lifetime' ? 'Lifetime' : 'Monthly'}`
@@ -1028,7 +1028,7 @@ export function SettingsPanel({ onClose, onDevDepsChange, quickScanFolders, onQu
               <div className="min-w-0">
                 <p className="text-sm text-zinc-200 font-medium">Open at startup</p>
                 <p className="text-xs text-zinc-500 mt-1 leading-relaxed">
-                  Launch Vectra silently in the background when your Mac starts so background scans can run without opening the app.
+                  Launch Nerion silently in the background when your Mac starts so background scans can run without opening the app.
                 </p>
               </div>
               <Toggle on={!!loginItem} onClick={toggleLoginItem} disabled={loginItem === null} />
@@ -1152,7 +1152,7 @@ export function SettingsPanel({ onClose, onDevDepsChange, quickScanFolders, onQu
               <div className="min-w-0">
                 <p className="text-sm text-zinc-200 font-medium">Show in menu bar</p>
                 <p className="text-xs text-zinc-500 mt-1 leading-relaxed">
-                  Display the Vectra icon in the macOS menu bar for quick access and scan status.
+                  Display the Nerion icon in the macOS menu bar for quick access and scan status.
                 </p>
               </div>
               <Toggle on={!!settings?.showMenuBarIcon} onClick={toggleMenuBarIcon} />

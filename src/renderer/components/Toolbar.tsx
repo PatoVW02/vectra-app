@@ -9,7 +9,7 @@ export function Toolbar({ onSettingsOpen }: ToolbarProps) {
   return (
     <HeaderFrame className="justify-between">
       <span className="text-zinc-500 text-xs font-medium tracking-widest uppercase select-none">
-        Vectra
+        Nerion
       </span>
       <button
         onClick={onSettingsOpen}

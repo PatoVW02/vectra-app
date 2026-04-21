@@ -27,7 +27,7 @@ export function OnboardingFlow({ onComplete }: Props) {
     const status = await window.electronAPI.checkOllama()
     setCheckingOllama(false)
     if (status.installed) {
-      localStorage.removeItem('vectra:aiHidden')
+      localStorage.removeItem('nerion:aiHidden')
       setStep('login')
     } else {
       setStep('ollama-install')
@@ -35,7 +35,7 @@ export function OnboardingFlow({ onComplete }: Props) {
   }
 
   function handleSkipAI() {
-    localStorage.setItem('vectra:aiHidden', 'true')
+    localStorage.setItem('nerion:aiHidden', 'true')
     setStep('login')
   }
 
@@ -66,7 +66,7 @@ export function OnboardingFlow({ onComplete }: Props) {
         <div className="w-full max-w-sm flex flex-col gap-8">
           {/* Wordmark */}
           <div className="flex flex-col items-center gap-1.5">
-            <p className="text-2xl font-semibold tracking-tight text-zinc-100">Vectra</p>
+            <p className="text-2xl font-semibold tracking-tight text-zinc-100">Nerion</p>
             <p className="text-sm text-zinc-500">Let's get you set up in three quick steps.</p>
           </div>
 
@@ -80,7 +80,7 @@ export function OnboardingFlow({ onComplete }: Props) {
                 </svg>
               }
               title="Notifications"
-              description="Vectra can alert you when a background scan finds space you can reclaim. Clicking the notification takes you straight to the review screen."
+              description="Nerion can alert you when a background scan finds space you can reclaim. Clicking the notification takes you straight to the review screen."
             >
               {notifDone ? (
                 <div className="flex flex-col gap-3">
@@ -135,7 +135,7 @@ export function OnboardingFlow({ onComplete }: Props) {
                 </svg>
               }
               title="AI-powered analysis"
-              description="Vectra can use a local AI model to explain what files are and whether they're safe to delete. Everything runs on your Mac — nothing leaves your device."
+              description="Nerion can use a local AI model to explain what files are and whether they're safe to delete. Everything runs on your Mac — nothing leaves your device."
             >
               <div className="flex flex-col gap-2">
                 <button
@@ -198,7 +198,7 @@ export function OnboardingFlow({ onComplete }: Props) {
                 </svg>
               }
               title="Open at startup"
-              description="Vectra can launch silently in the background when your Mac starts so it can scan periodically without you having to open the app."
+              description="Nerion can launch silently in the background when your Mac starts so it can scan periodically without you having to open the app."
             >
               <div className="flex flex-col gap-3">
                 {/* Toggle row */}

@@ -103,7 +103,7 @@ function createTray(): void {
   try {
     const icon = nativeImage.createFromPath(trayIconPath()).resize({ width: 16, height: 16 })
     tray = new Tray(icon)
-    tray.setToolTip('Vectra')
+    tray.setToolTip('Nerion')
     rebuildTrayMenu()
 
     // Rebuild every minute so "X ago" labels stay accurate.
@@ -130,17 +130,17 @@ export function setTrayVisibility(show: boolean): void {
 
 export function testNotification(): void {
   if (!Notification.isSupported()) {
-    console.error('[Vectra] Notifications not supported on this system')
+    console.error('[Nerion] Notifications not supported on this system')
     return
   }
   const n = new Notification({
-    title: 'Vectra — Test Notification',
+    title: 'Nerion — Test Notification',
     body: 'Notifications are working correctly.'
   })
-  n.on('show', () => console.log('[Vectra] Notification shown'))
-  n.on('failed', (_e, err) => console.error('[Vectra] Notification failed:', err))
+  n.on('show', () => console.log('[Nerion] Notification shown'))
+  n.on('failed', (_e, err) => console.error('[Nerion] Notification failed:', err))
   n.show()
-  console.log('[Vectra] testNotification called, isSupported=true')
+  console.log('[Nerion] testNotification called, isSupported=true')
 }
 
 export function rebuildTrayMenu(): void {
@@ -157,7 +157,7 @@ export function rebuildTrayMenu(): void {
   const hasResults = bg.lastScanResults.length > 0 && !manualScanIsNewer
 
   const items: Electron.MenuItemConstructorOptions[] = [
-    { label: 'Vectra', enabled: false },
+    { label: 'Nerion', enabled: false },
     { type: 'separator' },
     {
       label: bg.enabled
@@ -223,7 +223,7 @@ export function rebuildTrayMenu(): void {
 
   items.push({ type: 'separator' })
   items.push({
-    label: 'Open Vectra',
+    label: 'Open Nerion',
     click: () => { const w = getMainWin(); if (w) { w.show(); w.focus() } }
   })
   items.push({ type: 'separator' })
@@ -336,7 +336,7 @@ export async function runBackgroundScan(): Promise<void> {
 
     if (allCleanable.length > 0) {
       const note = new Notification({
-        title: 'Vectra — Scan Complete',
+        title: 'Nerion — Scan Complete',
         body: `Found ${fmtKB(totalKB)} you can clean up. Click to review.`
       })
       note.on('click', () => {
@@ -350,7 +350,7 @@ export async function runBackgroundScan(): Promise<void> {
       note.show()
     }
   } catch (err) {
-    console.error('[Vectra] Background scan error:', err)
+    console.error('[Nerion] Background scan error:', err)
   } finally {
     scanning = false
     rebuildTrayMenu()

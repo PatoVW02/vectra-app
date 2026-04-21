@@ -71,7 +71,7 @@ export function InfoPanel({ entry, isSelected, isPremium, onClose, onToggleSelec
   const [analysis, setAnalysis] = useState('')
   const [analysisError, setAnalysisError] = useState<string | null>(null)
   const [analysisComplete, setAnalysisComplete] = useState(false)
-  const [aiHidden, setAiHidden] = useState(() => localStorage.getItem('vectra:aiHidden') === 'true')
+  const [aiHidden, setAiHidden] = useState(() => localStorage.getItem('nerion:aiHidden') === 'true')
   const [aiMode, setAiMode] = useState<'cloud' | 'ollama'>('cloud')
 
   // Trigger slide-in on mount + read AI mode preference
@@ -219,7 +219,7 @@ export function InfoPanel({ entry, isSelected, isPremium, onClose, onToggleSelec
           <div className="flex items-center gap-1.5">
             <span className="text-[10px] text-zinc-700">AI analysis hidden</span>
             <button
-              onClick={() => { localStorage.removeItem('vectra:aiHidden'); setAiHidden(false) }}
+              onClick={() => { localStorage.removeItem('nerion:aiHidden'); setAiHidden(false) }}
               className="text-[10px] text-zinc-600 hover:text-zinc-400 transition-colors underline"
             >
               Enable
@@ -258,7 +258,7 @@ export function InfoPanel({ entry, isSelected, isPremium, onClose, onToggleSelec
                       Download Ollama
                     </button>
                     <button
-                      onClick={() => { localStorage.setItem('vectra:aiHidden', 'true'); setAiHidden(true) }}
+                      onClick={() => { localStorage.setItem('nerion:aiHidden', 'true'); setAiHidden(true) }}
                       className="text-[11px] text-zinc-600 hover:text-zinc-400 transition-colors"
                     >
                       Don't show this

@@ -1,5 +1,5 @@
 {
-  "name": "vectra",
+  "name": "nerion",
   "version": "1.2.2",
   "description": "macOS disk space analyzer",
   "author": "patovw",
@@ -43,9 +43,9 @@
     "vite": "^5.4.0"
   },
   "build": {
-    "appId": "com.patricio.vectra",
-    "productName": "Vectra",
-    "artifactName": "Vectra-${arch}.${ext}",
+    "appId": "com.patricio.nerion",
+    "productName": "Nerion",
+    "artifactName": "Nerion-${arch}.${ext}",
     "mac": {
       "target": [
         "dmg",
@@ -73,7 +73,7 @@
     "publish": {
       "provider": "github",
       "owner": "PatoVW02",
-      "repo": "vectra-app",
+      "repo": "nerion-app",
       "releaseType": "release"
     }
   }

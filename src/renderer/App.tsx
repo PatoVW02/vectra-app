@@ -115,7 +115,7 @@ function AppShell() {
   useEffect(() => {
     window.electronAPI.getAppVersion().then((version) => {
       setAppVersion(version)
-      const lastSeen = localStorage.getItem('vectra:lastSeenWhatsNewVersion')
+      const lastSeen = localStorage.getItem('nerion:lastSeenWhatsNewVersion')
       if (lastSeen !== version) setWhatsNewOpen(true)
     }).catch(() => {})
   }, [])
@@ -129,7 +129,6 @@ function AppShell() {
 
   // Smart Clean session state — reset on every new scan
   const prevScanning = useRef(false)
-  const smartCleanEverOpened = useRef(false)
   const [savedLeftoverSelection, setSavedLeftoverSelection] = useState<Set<string> | null>(null)
 
   // Resizable right panel
@@ -264,15 +263,6 @@ function AppShell() {
     return result
   }, [tree, quickScanAllowedPaths, rootPath])
 
-  const autoSelectableCleanable = useMemo(() => {
-    if (showDevDeps) return allCleanable
-    const filtered = new Map<string, DiskEntry>()
-    for (const [path, entry] of allCleanable) {
-      if (!isDevDependency(entry)) filtered.set(path, entry)
-    }
-    return filtered
-  }, [allCleanable, showDevDeps])
-
   const cleanableCount = allCleanable.size
 
   // Notify tray when a manual scan finishes
@@ -340,7 +330,6 @@ function AppShell() {
     setContextMenu(null)
     setInfoPanelEntry(null)
     setSmartCleanOpen(false)
-    smartCleanEverOpened.current = false
     setSavedLeftoverSelection(null)
   }, [scanMode, QUICK_SCAN_PATH, selectedPath, resetTo])
 
@@ -369,7 +358,6 @@ function AppShell() {
       setContextMenu(null)
       setInfoPanelEntry(null)
       setSmartCleanOpen(false)
-      smartCleanEverOpened.current = false
       setSavedLeftoverSelection(null)
       setReviewOpen(false)
     }
@@ -389,7 +377,6 @@ function AppShell() {
       setContextMenu(null)
       setInfoPanelEntry(null)
       setSmartCleanOpen(false)
-      smartCleanEverOpened.current = false
       setSavedLeftoverSelection(null)
       setReviewOpen(false)
     }
@@ -443,34 +430,16 @@ function AppShell() {
   // ── Smart clean ───────────────────────────────────────────────────────────
 
   const handleSmartClean = useCallback(() => {
-    if (isPremium && !smartCleanEverOpened.current) {
-      // First open only (premium): auto-select based on the dev-dependency setting.
-      setSelectedPaths((prev) => new Map([...prev, ...autoSelectableCleanable]))
-      smartCleanEverOpened.current = true
-    }
     setSmartCleanOpen(true)
-  }, [autoSelectableCleanable, isPremium])
-
-  const handleSmartCleanToggle = useCallback((path: string, entry: DiskEntry) => {
-    setSelectedPaths((prev) => {
-      const next = new Map(prev)
-      if (next.has(path)) next.delete(path)
-      else next.set(path, entry)
-      return next
-    })
   }, [])
 
-  const handleSmartCleanSelectAll = useCallback(() => {
-    setSelectedPaths((prev) => new Map([...prev, ...allCleanable]))
-  }, [allCleanable])
-
-  const handleSmartCleanDeselectAll = useCallback(() => {
-    setSelectedPaths((prev) => {
-      const next = new Map(prev)
-      for (const path of allCleanable.keys()) next.delete(path)
-      return next
-    })
-  }, [allCleanable])
+  /** Called by SmartCleanPanel when the user clicks "Review" — replaces the current
+   *  selection with SmartClean's curated set and opens the Review panel. */
+  const handleSmartCleanReview = useCallback((entries: DiskEntry[]) => {
+    setSelectedPaths(new Map(entries.map(e => [e.path, e])))
+    setSmartCleanOpen(false)
+    setReviewOpen(true)
+  }, [])
 
   /** Select or deselect a batch of entries from the list panel. */
   const handleBatchToggle = useCallback((entries: DiskEntry[], select: boolean) => {
@@ -480,15 +449,6 @@ function AppShell() {
         if (select) next.set(entry.path, entry)
         else next.delete(entry.path)
       }
-      return next
-    })
-  }, [])
-
-  /** Called by SmartCleanPanel to merge leftover DiskEntries into the main selection. */
-  const handleAddLeftoversToSelection = useCallback((entries: DiskEntry[]) => {
-    setSelectedPaths((prev) => {
-      const next = new Map(prev)
-      for (const entry of entries) next.set(entry.path, entry)
       return next
     })
   }, [])
@@ -608,7 +568,7 @@ function AppShell() {
               >
                 {/* Title + subtitle */}
                 <div className="flex flex-col items-center gap-2">
-                  <p className="text-2xl font-semibold tracking-tight text-zinc-200">Vectra</p>
+                  <p className="text-2xl font-semibold tracking-tight text-zinc-200">Nerion</p>
                   <p className="text-sm text-zinc-500">
                     {scanMode === 'quick' ? 'Scan common cleanup locations.' : 'Select a folder and scan to see what\'s taking up space.'}
                   </p>
@@ -723,14 +683,11 @@ function AppShell() {
                   <SmartCleanPanel
                     allCleanable={allCleanable}
                     fullTree={tree}
-                    selectedPaths={selectedPathsSet}
                     rootPath={smartCleanRootPath}
-                    onToggle={handleSmartCleanToggle}
-                    onSelectAll={handleSmartCleanSelectAll}
-                    onDeselectAll={handleSmartCleanDeselectAll}
-                    onAddLeftoversToSelection={handleAddLeftoversToSelection}
+                    homeDir={homeDir}
                     onInfo={setInfoPanelEntry}
                     onRevealInFinder={(p) => window.electronAPI.revealInFinder(p)}
+                    onReview={handleSmartCleanReview}
                     initialLeftoverSelection={savedLeftoverSelection}
                     isPremium={isPremium}
                     onUpgrade={() => setUpgradeOpen(true)}
@@ -851,7 +808,7 @@ function AppShell() {
           onClose={() => {
             setWhatsNewOpen(false)
             // Mark this version as seen so auto-show doesn't trigger again until next update
-            if (appVersion) localStorage.setItem('vectra:lastSeenWhatsNewVersion', appVersion)
+            if (appVersion) localStorage.setItem('nerion:lastSeenWhatsNewVersion', appVersion)
           }}
         />
       )}

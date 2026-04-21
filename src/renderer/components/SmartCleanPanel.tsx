@@ -9,18 +9,18 @@ import { isCriticalPath, isContentOnlyProtectedRoot } from '../utils/criticalPat
 interface SmartCleanPanelProps {
   allCleanable: Map<string, DiskEntry>
   fullTree: Map<string, DiskEntry[]>
-  selectedPaths: Set<string>
   rootPath: string
-  onToggle: (path: string, entry: DiskEntry) => void
-  onSelectAll: () => void
-  onDeselectAll: () => void
-  /** Add leftover DiskEntries to the main selection and close the panel. */
-  onAddLeftoversToSelection: (entries: DiskEntry[]) => void
+  homeDir: string | null
   onInfo: (entry: DiskEntry) => void
   onRevealInFinder: (path: string) => void
   /**
-   * null  → first open this session; auto-select all leftovers.
-   * Set   → restore this exact selection (paths that no longer exist are ignored).
+   * Called when the user clicks "Review" — receives every selected entry
+   * (scan items + leftovers) so the parent can open the Review panel.
+   */
+  onReview: (entries: DiskEntry[]) => void
+  /**
+   * null  → first open this session.
+   * Set   → restore this exact leftover selection (paths that no longer exist are ignored).
    */
   initialLeftoverSelection: Set<string> | null
   /** Called with the current leftover selection so the caller can persist it. */
@@ -488,14 +488,11 @@ function LeftoverRow({ item, checked, onToggle, onReveal, onInfo, disabled }: Le
 export function SmartCleanPanel({
   allCleanable,
   fullTree,
-  selectedPaths,
   rootPath,
-  onToggle,
-  onSelectAll,
-  onDeselectAll,
-  onAddLeftoversToSelection,
+  homeDir,
   onInfo,
   onRevealInFinder,
+  onReview,
   initialLeftoverSelection,
   onClose,
   isPremium,
@@ -508,6 +505,10 @@ export function SmartCleanPanel({
   const [cachesCollapsed, setCachesCollapsed] = useState(false)
   const [devCollapsed, setDevCollapsed] = useState(false)
   const [leftoversCollapsed, setLeftoversCollapsed] = useState(false)
+
+  // SmartClean manages its own selection — completely independent of the treemap /
+  // Review panel. Items are sent to the Review panel only when the user clicks "Review".
+  const [selectedScanPaths, setSelectedScanPaths] = useState<Set<string>>(new Set())
 
   // App leftovers
   const [leftovers, setLeftovers] = useState<AppLeftover[]>([])
@@ -522,11 +523,16 @@ export function SmartCleanPanel({
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose, selectedLeftovers])
 
-  // Strip confirmed-deleted paths from leftovers + selectedLeftovers as they happen
+  // Strip confirmed-deleted paths from all selections as deletions happen live
   useEffect(() => {
     if (confirmedDeletedPaths.size === 0) return
     setLeftovers(prev => prev.filter(l => !confirmedDeletedPaths.has(l.path)))
     setSelectedLeftovers(prev => {
+      const next = new Set(prev)
+      for (const p of confirmedDeletedPaths) next.delete(p)
+      return next
+    })
+    setSelectedScanPaths(prev => {
       const next = new Set(prev)
       for (const p of confirmedDeletedPaths) next.delete(p)
       return next
@@ -553,14 +559,61 @@ export function SmartCleanPanel({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []) // intentionally run once on mount; initialLeftoverSelection captured at open time
 
-  // Fast path lookup from fullTree — used to resolve manually-selected entries
-  const entryByPath = useMemo(() => {
-    const m = new Map<string, DiskEntry>()
-    for (const children of fullTree.values()) {
-      for (const e of children) m.set(e.path, e)
+  // Auto-select all scan items (caches + dev deps) on first open, except Downloads
+  // items which are handled separately by the age-based effect below.
+  const scanAutoSelectedRef = useRef(false)
+  useEffect(() => {
+    if (scanAutoSelectedRef.current) return
+    if (systemEntries.length === 0 && devEntries.length === 0) return // wait for data
+    scanAutoSelectedRef.current = true
+
+    const downloadsRoot = homeDir ? `${homeDir}/Downloads` : null
+    const initial = new Set<string>()
+    for (const e of systemEntries) {
+      // Skip Downloads items — age-based logic handles them below
+      if (downloadsRoot) {
+        const parent = e.path.substring(0, e.path.lastIndexOf('/'))
+        if (parent === downloadsRoot) continue
+      }
+      initial.add(e.path)
     }
-    return m
-  }, [fullTree])
+    for (const e of devEntries) initial.add(e.path)
+    setSelectedScanPaths(initial)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [systemEntries, devEntries, homeDir])
+
+  // Auto-select Downloads items older than 7 days (by last-modified date).
+  // Runs once after scan data is ready (guarded by ref).
+  const downloadsAutoSelectedRef = useRef(false)
+  useEffect(() => {
+    if (downloadsAutoSelectedRef.current || !homeDir || systemEntries.length === 0) return
+    downloadsAutoSelectedRef.current = true
+
+    const downloadsRoot = `${homeDir}/Downloads`
+    const downloadItems = systemEntries.filter((e) => {
+      const parent = e.path.substring(0, e.path.lastIndexOf('/'))
+      return parent === downloadsRoot
+    })
+    if (downloadItems.length === 0) return
+
+    const AGE_MS = 7 * 24 * 60 * 60 * 1000
+    const now = Date.now()
+
+    Promise.allSettled(
+      downloadItems.map(async (entry) => {
+        const stats = await window.electronAPI.getItemStats(entry.path)
+        if ('error' in stats) return
+        const mostRecent = Math.max(
+          new Date(stats.modified).getTime(),
+          new Date(stats.created).getTime(),
+        )
+        if (now - mostRecent > AGE_MS) {
+          setSelectedScanPaths(prev => new Set([...prev, entry.path]))
+        }
+      })
+    )
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [systemEntries, homeDir])
 
   // Split cleanable entries into system (Caches, Logs, …) and dev (node_modules, venv, …).
   // We build two completely separate trees so intermediate ancestor nodes never mix
@@ -571,24 +624,12 @@ export function SmartCleanPanel({
     ),
     [allCleanable, confirmedDeletedPaths]
   )
-  const devEntries = useMemo(() => {
-    const fromCleanable = [...allCleanable.values()].filter(
+  const devEntries = useMemo(
+    () => [...allCleanable.values()].filter(
       e => e.sizeKB > 0 && isDevDependency(e) && !confirmedDeletedPaths.has(e.path)
-    )
-    // Also include dev deps that were manually selected from the treemap but aren't in allCleanable
-    // (this happens when the "show dev dependencies" setting is off)
-    const seen = new Set(fromCleanable.map(e => e.path))
-    const extra: DiskEntry[] = []
-    for (const path of selectedPaths) {
-      if (seen.has(path) || confirmedDeletedPaths.has(path)) continue
-      const entry = entryByPath.get(path)
-      if (entry && entry.sizeKB > 0 && isDevDependency(entry)) {
-        extra.push(entry)
-        seen.add(path)
-      }
-    }
-    return [...fromCleanable, ...extra]
-  }, [allCleanable, selectedPaths, entryByPath, confirmedDeletedPaths])
+    ),
+    [allCleanable, confirmedDeletedPaths]
+  )
 
   // Direct children of system cleanable dirs — individually selectable sub-items.
   const { systemChildEntries, systemChildPaths } = useMemo(() => {
@@ -644,10 +685,10 @@ export function SmartCleanPanel({
 
   const { totalSelectedKB, totalSelectedCount } = useMemo(() => {
     let kb = 0, count = 0
-    for (const e of treeEntries) { if (selectedPaths.has(e.path)) { kb += e.sizeKB; count++ } }
+    for (const e of treeEntries) { if (selectedScanPaths.has(e.path)) { kb += e.sizeKB; count++ } }
     for (const l of leftovers)   { if (selectedLeftovers.has(l.path)) { kb += l.sizeKB; count++ } }
     return { totalSelectedKB: kb, totalSelectedCount: count }
-  }, [treeEntries, selectedPaths, leftovers, selectedLeftovers])
+  }, [treeEntries, selectedScanPaths, leftovers, selectedLeftovers])
 
   // Preview mode: total of every top-level item in the panel (what "Select All" would give).
   const { totalAvailableKB, totalAvailableCount } = useMemo(() => {
@@ -659,41 +700,49 @@ export function SmartCleanPanel({
 
   // Per-section "all selected" state
   const allSystemSelected = useMemo(
-    () => systemEntries.length > 0 && systemEntries.every(e => selectedPaths.has(e.path)),
-    [systemEntries, selectedPaths]
+    () => systemEntries.length > 0 && systemEntries.every(e => selectedScanPaths.has(e.path)),
+    [systemEntries, selectedScanPaths]
   )
   const allDevSelected = useMemo(
-    () => devEntries.length > 0 && devEntries.every(e => selectedPaths.has(e.path)),
-    [devEntries, selectedPaths]
+    () => devEntries.length > 0 && devEntries.every(e => selectedScanPaths.has(e.path)),
+    [devEntries, selectedScanPaths]
   )
-  // Used by the global header "Select All" button (covers both sections)
   const allScanSelected = useMemo(
-    () => allEntries.length > 0 && allEntries.every((e) => selectedPaths.has(e.path)),
-    [allEntries, selectedPaths]
+    () => allEntries.length > 0 && allEntries.every(e => selectedScanPaths.has(e.path)),
+    [allEntries, selectedScanPaths]
   )
   const allLeftoversSelected = useMemo(
-    () => leftovers.length > 0 && leftovers.every((l) => selectedLeftovers.has(l.path)),
+    () => leftovers.length > 0 && leftovers.every(l => selectedLeftovers.has(l.path)),
     [leftovers, selectedLeftovers]
   )
 
+  const toggleScanEntry = useCallback((p: string) => {
+    setSelectedScanPaths(prev => {
+      const next = new Set(prev)
+      if (next.has(p)) next.delete(p)
+      else next.add(p)
+      return next
+    })
+  }, [])
+
   const selectAllSystem = useCallback(() => {
-    for (const e of systemEntries) if (!selectedPaths.has(e.path)) onToggle(e.path, e)
-  }, [systemEntries, selectedPaths, onToggle])
+    setSelectedScanPaths(prev => { const n = new Set(prev); systemEntries.forEach(e => n.add(e.path)); return n })
+  }, [systemEntries])
 
   const deselectAllSystem = useCallback(() => {
-    for (const e of systemEntries) if (selectedPaths.has(e.path)) onToggle(e.path, e)
-  }, [systemEntries, selectedPaths, onToggle])
+    setSelectedScanPaths(prev => { const n = new Set(prev); systemEntries.forEach(e => n.delete(e.path)); return n })
+  }, [systemEntries])
 
   const selectAllDev = useCallback(() => {
-    for (const e of devEntries) if (!selectedPaths.has(e.path)) onToggle(e.path, e)
-  }, [devEntries, selectedPaths, onToggle])
+    setSelectedScanPaths(prev => { const n = new Set(prev); devEntries.forEach(e => n.add(e.path)); return n })
+  }, [devEntries])
 
   const deselectAllDev = useCallback(() => {
-    for (const e of devEntries) if (selectedPaths.has(e.path)) onToggle(e.path, e)
-  }, [devEntries, selectedPaths, onToggle])
+    setSelectedScanPaths(prev => { const n = new Set(prev); devEntries.forEach(e => n.delete(e.path)); return n })
+  }, [devEntries])
 
   const toggleLeftover = useCallback((path: string) => {
-    setSelectedLeftovers((prev) => {
+    setSelectedLeftovers(prev => {
       const next = new Set(prev)
       if (next.has(path)) next.delete(path)
       else next.add(path)
@@ -701,20 +750,24 @@ export function SmartCleanPanel({
     })
   }, [])
 
-  const handleAddToSelection = useCallback(() => {
-    // Scan items are already in selectedPaths via onToggle — just add leftovers
-    const selectedLeftoverItems = leftovers.filter((l) => selectedLeftovers.has(l.path))
-    if (selectedLeftoverItems.length > 0) {
-      const entries: DiskEntry[] = selectedLeftoverItems.map((l) => ({
-        name: l.name,
-        path: l.path,
-        sizeKB: l.sizeKB,
-        isDir: !l.name.endsWith('.plist'),
-      }))
-      onAddLeftoversToSelection(entries)
+  // Assemble all selected items and hand them to the parent to open Review.
+  const handleReview = useCallback(() => {
+    // Build a lookup from path → DiskEntry for all scan entries
+    const entryMap = new Map<string, DiskEntry>()
+    for (const e of [...systemEntries, ...systemChildEntries, ...devEntries]) entryMap.set(e.path, e)
+
+    const scanSelected: DiskEntry[] = []
+    for (const p of selectedScanPaths) {
+      const entry = entryMap.get(p)
+      if (entry) scanSelected.push(entry)
     }
+    const leftoverSelected: DiskEntry[] = leftovers
+      .filter(l => selectedLeftovers.has(l.path))
+      .map(l => ({ name: l.name, path: l.path, sizeKB: l.sizeKB, isDir: !l.name.endsWith('.plist') }))
+
+    onReview([...scanSelected, ...leftoverSelected])
     onClose(selectedLeftovers)
-  }, [leftovers, selectedLeftovers, onAddLeftoversToSelection, onClose])
+  }, [selectedScanPaths, selectedLeftovers, systemEntries, systemChildEntries, devEntries, leftovers, onReview, onClose])
 
   return (
     <div
@@ -759,11 +812,11 @@ export function SmartCleanPanel({
             <button
               onClick={() => {
                 if (allScanSelected && allLeftoversSelected) {
-                  onDeselectAll()
+                  setSelectedScanPaths(new Set())
                   setSelectedLeftovers(new Set())
                 } else {
-                  onSelectAll()
-                  setSelectedLeftovers(new Set(leftovers.map((l) => l.path)))
+                  setSelectedScanPaths(new Set(allEntries.map(e => e.path)))
+                  setSelectedLeftovers(new Set(leftovers.map(l => l.path)))
                 }
               }}
               className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
@@ -798,8 +851,8 @@ export function SmartCleanPanel({
                 key={node.path}
                 node={node}
                 depth={0}
-                selectedPaths={selectedPaths}
-                onToggle={onToggle}
+                selectedPaths={selectedScanPaths}
+                onToggle={(p) => toggleScanEntry(p)}
                 onInfo={onInfo}
                 onRevealInFinder={onRevealInFinder}
                 disabled={!isPremium}
@@ -822,8 +875,8 @@ export function SmartCleanPanel({
                 key={node.path}
                 node={node}
                 depth={0}
-                selectedPaths={selectedPaths}
-                onToggle={onToggle}
+                selectedPaths={selectedScanPaths}
+                onToggle={(p) => toggleScanEntry(p)}
                 onInfo={onInfo}
                 onRevealInFinder={onRevealInFinder}
                 disabled={!isPremium}
@@ -878,13 +931,13 @@ export function SmartCleanPanel({
       <div className="shrink-0 border-t border-white/5 px-4 py-3 flex flex-col gap-2">
         {isPremium ? (
           <button
-            onClick={handleAddToSelection}
+            onClick={handleReview}
             disabled={totalSelectedCount === 0}
             className="w-full py-2 rounded-lg bg-blue-600/80 hover:bg-blue-600 disabled:opacity-30 disabled:cursor-not-allowed text-xs text-white font-medium transition-colors"
           >
             {totalSelectedCount > 0
-              ? `Add ${totalSelectedCount} ${totalSelectedCount === 1 ? 'item' : 'items'} to Selection`
-              : 'Add to Selection'}
+              ? `Review ${totalSelectedCount} ${totalSelectedCount === 1 ? 'Item' : 'Items'}`
+              : 'Review Items'}
           </button>
         ) : (
           <button

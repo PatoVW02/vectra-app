@@ -86,7 +86,7 @@ export function WhatsNewModal({ version, onClose }: WhatsNewModalProps) {
               </div>
               <div>
                 <h2 className="text-base font-semibold text-zinc-100 leading-tight">
-                  What's New in Vectra {release.version}
+                  What's New in Nerion {release.version}
                 </h2>
                 <p className="text-xs text-zinc-500 mt-0.5">{release.date}</p>
               </div>
