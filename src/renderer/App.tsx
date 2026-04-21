@@ -434,11 +434,10 @@ function AppShell() {
   }, [])
 
   /** Called by SmartCleanPanel when the user clicks "Review" — replaces the current
-   *  selection with SmartClean's curated set and opens the Review panel. */
+   *  selection with SmartClean's curated set and closes the panel. */
   const handleSmartCleanReview = useCallback((entries: DiskEntry[]) => {
     setSelectedPaths(new Map(entries.map(e => [e.path, e])))
     setSmartCleanOpen(false)
-    setReviewOpen(true)
   }, [])
 
   /** Select or deselect a batch of entries from the list panel. */

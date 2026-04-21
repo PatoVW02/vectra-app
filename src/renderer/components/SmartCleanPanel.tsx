@@ -559,6 +559,22 @@ export function SmartCleanPanel({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []) // intentionally run once on mount; initialLeftoverSelection captured at open time
 
+  // Split cleanable entries into system (Caches, Logs, …) and dev (node_modules, venv, …).
+  // We build two completely separate trees so intermediate ancestor nodes never mix
+  // system and dev content — which would cause everything to collapse into one section.
+  const systemEntries = useMemo(
+    () => [...allCleanable.values()].filter(
+      e => e.sizeKB > 0 && !isDevDependency(e) && !confirmedDeletedPaths.has(e.path)
+    ),
+    [allCleanable, confirmedDeletedPaths]
+  )
+  const devEntries = useMemo(
+    () => [...allCleanable.values()].filter(
+      e => e.sizeKB > 0 && isDevDependency(e) && !confirmedDeletedPaths.has(e.path)
+    ),
+    [allCleanable, confirmedDeletedPaths]
+  )
+
   // Auto-select all scan items (caches + dev deps) on first open, except Downloads
   // items which are handled separately by the age-based effect below.
   const scanAutoSelectedRef = useRef(false)
@@ -614,22 +630,6 @@ export function SmartCleanPanel({
     )
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [systemEntries, homeDir])
-
-  // Split cleanable entries into system (Caches, Logs, …) and dev (node_modules, venv, …).
-  // We build two completely separate trees so intermediate ancestor nodes never mix
-  // system and dev content — which would cause everything to collapse into one section.
-  const systemEntries = useMemo(
-    () => [...allCleanable.values()].filter(
-      e => e.sizeKB > 0 && !isDevDependency(e) && !confirmedDeletedPaths.has(e.path)
-    ),
-    [allCleanable, confirmedDeletedPaths]
-  )
-  const devEntries = useMemo(
-    () => [...allCleanable.values()].filter(
-      e => e.sizeKB > 0 && isDevDependency(e) && !confirmedDeletedPaths.has(e.path)
-    ),
-    [allCleanable, confirmedDeletedPaths]
-  )
 
   // Direct children of system cleanable dirs — individually selectable sub-items.
   const { systemChildEntries, systemChildPaths } = useMemo(() => {
@@ -936,7 +936,7 @@ export function SmartCleanPanel({
             className="w-full py-2 rounded-lg bg-blue-600/80 hover:bg-blue-600 disabled:opacity-30 disabled:cursor-not-allowed text-xs text-white font-medium transition-colors"
           >
             {totalSelectedCount > 0
-              ? `Review ${totalSelectedCount} ${totalSelectedCount === 1 ? 'Item' : 'Items'}`
+              ? `Review ${totalSelectedCount} ${totalSelectedCount === 1 ? 'Item' : 'Items'} · ${formatSize(totalSelectedKB)}`
               : 'Review Items'}
           </button>
         ) : (

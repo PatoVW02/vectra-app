@@ -1,16 +1,31 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
-type Step = 'notifications' | 'ai-choice' | 'ollama-install' | 'login'
+type Step = 'notifications' | 'ai-choice' | 'ai-provider-choice' | 'ollama-install' | 'login'
 
 interface Props {
   onComplete: () => void
 }
 
 export function OnboardingFlow({ onComplete }: Props) {
-  const [step, setStep] = useState<Step>('notifications')
+  const [history, setHistory] = useState<Step[]>(['notifications'])
+  const step = history[history.length - 1]
   const [notifDone, setNotifDone] = useState(false)
   const [checkingOllama, setCheckingOllama] = useState(false)
-  const [loginEnabled, setLoginEnabled] = useState(false)
+  const [loginEnabled, setLoginEnabled] = useState(true)
+
+  function navigate(next: Step) {
+    setHistory(h => [...h, next])
+  }
+
+  function goBack() {
+    setHistory(h => h.length > 1 ? h.slice(0, -1) : h)
+  }
+
+  useEffect(() => {
+    if (step === 'login') {
+      window.electronAPI.setLoginItem(true)
+    }
+  }, [step])
 
   function finish() {
     window.electronAPI.markOnboardingComplete()
@@ -22,26 +37,35 @@ export function OnboardingFlow({ onComplete }: Props) {
     setNotifDone(true)
   }
 
-  async function handleEnableAI() {
-    setCheckingOllama(true)
-    const status = await window.electronAPI.checkOllama()
-    setCheckingOllama(false)
-    if (status.installed) {
-      localStorage.removeItem('nerion:aiHidden')
-      setStep('login')
-    } else {
-      setStep('ollama-install')
-    }
+  function handleEnableAI() {
+    navigate('ai-provider-choice')
   }
 
   function handleSkipAI() {
     localStorage.setItem('nerion:aiHidden', 'true')
-    setStep('login')
+    navigate('login')
+  }
+
+  function handleCloudModel() {
+    localStorage.removeItem('nerion:aiHidden')
+    navigate('login')
+  }
+
+  async function handleOllamaChoice() {
+    setCheckingOllama(true)
+    const status = await window.electronAPI.checkOllama()
+    setCheckingOllama(false)
+    localStorage.removeItem('nerion:aiHidden')
+    if (status.installed) {
+      navigate('login')
+    } else {
+      navigate('ollama-install')
+    }
   }
 
   function handleInstallOllama() {
     window.electronAPI.openExternal('https://ollama.com/download')
-    setStep('login')
+    navigate('login')
   }
 
   async function toggleLogin() {
@@ -100,7 +124,7 @@ export function OnboardingFlow({ onComplete }: Props) {
                     </p>
                   </div>
                   <button
-                    onClick={() => setStep('ai-choice')}
+                    onClick={() => navigate('ai-choice')}
                     className="w-full py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-sm font-medium text-white transition-colors"
                   >
                     Continue
@@ -115,7 +139,7 @@ export function OnboardingFlow({ onComplete }: Props) {
                     Allow Notifications
                   </button>
                   <button
-                    onClick={() => setStep('ai-choice')}
+                    onClick={() => navigate('ai-choice')}
                     className="w-full py-2 rounded-lg text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
                   >
                     Skip
@@ -128,6 +152,7 @@ export function OnboardingFlow({ onComplete }: Props) {
           {/* ── Step 2: AI ── */}
           {step === 'ai-choice' && (
             <StepCard
+              onBack={goBack}
               icon={
                 <svg className="w-6 h-6 text-violet-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
@@ -140,20 +165,49 @@ export function OnboardingFlow({ onComplete }: Props) {
               <div className="flex flex-col gap-2">
                 <button
                   onClick={handleEnableAI}
+                  className="w-full py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-sm font-medium text-white transition-colors"
+                >
+                  Enable AI Analysis
+                </button>
+                <button
+                  onClick={handleSkipAI}
+                  className="w-full py-2 rounded-lg text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
+                >
+                  Skip for now
+                </button>
+              </div>
+            </StepCard>
+          )}
+
+          {/* ── Step 2a: AI provider choice ── */}
+          {step === 'ai-provider-choice' && (
+            <StepCard
+              onBack={checkingOllama ? undefined : goBack}
+              icon={
+                <svg className="w-6 h-6 text-violet-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+                    d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                </svg>
+              }
+              title="Choose AI provider"
+              description="Use a cloud model for the best results, or run Ollama locally to keep everything on your Mac."
+            >
+              <div className="flex flex-col gap-2">
+                <button
+                  onClick={handleCloudModel}
+                  className="w-full py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-sm font-medium text-white transition-colors"
+                >
+                  Cloud model
+                </button>
+                <button
+                  onClick={handleOllamaChoice}
                   disabled={checkingOllama}
-                  className="w-full py-2 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-sm font-medium text-white transition-colors flex items-center justify-center gap-2"
+                  className="w-full py-2 rounded-lg bg-white/[0.06] hover:bg-white/[0.10] disabled:opacity-50 text-sm font-medium text-zinc-200 transition-colors flex items-center justify-center gap-2"
                 >
                   {checkingOllama && (
                     <div className="w-3.5 h-3.5 rounded-full border border-transparent border-t-white animate-spin shrink-0" />
                   )}
-                  {checkingOllama ? 'Checking…' : 'Enable AI Analysis'}
-                </button>
-                <button
-                  onClick={handleSkipAI}
-                  disabled={checkingOllama}
-                  className="w-full py-2 rounded-lg text-sm text-zinc-500 hover:text-zinc-300 disabled:opacity-50 transition-colors"
-                >
-                  Skip for now
+                  {checkingOllama ? 'Checking…' : 'Ollama (local)'}
                 </button>
               </div>
             </StepCard>
@@ -162,6 +216,7 @@ export function OnboardingFlow({ onComplete }: Props) {
           {/* ── Step 2b: Ollama install ── */}
           {step === 'ollama-install' && (
             <StepCard
+              onBack={goBack}
               icon={
                 <svg className="w-6 h-6 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
@@ -179,7 +234,7 @@ export function OnboardingFlow({ onComplete }: Props) {
                   Download Ollama
                 </button>
                 <button
-                  onClick={() => setStep('login')}
+                  onClick={() => navigate('login')}
                   className="w-full py-2 rounded-lg text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
                 >
                   Skip for now
@@ -191,6 +246,7 @@ export function OnboardingFlow({ onComplete }: Props) {
           {/* ── Step 3: Open at login ── */}
           {step === 'login' && (
             <StepCard
+              onBack={goBack}
               icon={
                 <svg className="w-6 h-6 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
@@ -251,18 +307,33 @@ function StepCard({
   icon,
   title,
   description,
+  onBack,
   children
 }: {
   icon: React.ReactNode
   title: string
   description: string
+  onBack?: () => void
   children: React.ReactNode
 }) {
   return (
     <div className="rounded-2xl bg-white/[0.04] border border-white/[0.07] p-6 flex flex-col gap-5">
       <div className="flex flex-col gap-3">
-        <div className="w-10 h-10 rounded-xl bg-white/[0.06] flex items-center justify-center">
-          {icon}
+        <div className="flex items-center justify-between">
+          <div className="w-10 h-10 rounded-xl bg-white/[0.06] flex items-center justify-center">
+            {icon}
+          </div>
+          {onBack && (
+            <button
+              onClick={onBack}
+              className="flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-300 underline underline-offset-2 transition-colors"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              </svg>
+              Back
+            </button>
+          )}
         </div>
         <div>
           <p className="text-sm font-semibold text-zinc-200">{title}</p>
