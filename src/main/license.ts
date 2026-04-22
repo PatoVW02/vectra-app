@@ -75,7 +75,7 @@ function getLicensePath(): string {
 // The key is derived from the app name + version (deterministic, not on disk).
 // This blocks casual text-editor tampering; server revalidation is the real gate.
 function getHmacKey(): string {
-  return `${app.name}:${app.getVersion()}`
+  return app.name
 }
 
 function computeSig(data: Omit<LicenseFile, 'sig'>): string {
