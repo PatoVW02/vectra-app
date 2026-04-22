@@ -133,6 +133,7 @@ declare global {
       markOnboardingComplete: () => Promise<void>
       getLoginItem: () => Promise<boolean>
       setLoginItem: (enable: boolean) => Promise<void>
+      checkFullDiskAccess: () => Promise<boolean>
       checkOllama: () => Promise<{ installed: boolean; hasModels?: boolean }>
       getOllamaModels: () => Promise<{ ok: boolean; models: OllamaModel[] }>
       pullModel: (name: string) => void

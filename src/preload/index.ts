@@ -90,6 +90,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   markOnboardingComplete: () => ipcRenderer.invoke('mark-onboarding-complete'),
   getLoginItem: () => ipcRenderer.invoke('get-login-item') as Promise<boolean>,
   setLoginItem: (enable: boolean) => ipcRenderer.invoke('set-login-item', enable),
+  checkFullDiskAccess: () => ipcRenderer.invoke('check-full-disk-access') as Promise<boolean>,
   checkOllama: () => ipcRenderer.invoke('check-ollama') as Promise<{ installed: boolean; hasModels?: boolean }>,
   getOllamaModels: () => ipcRenderer.invoke('get-ollama-models') as Promise<{ ok: boolean; models: Array<{ name: string; size: number }> }>,
   pullModel: (name: string) => ipcRenderer.send('pull-model', name),

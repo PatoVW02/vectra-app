@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 
-type Step = 'notifications' | 'ai-choice' | 'ai-provider-choice' | 'ollama-install' | 'login'
+type Step = 'notifications' | 'full-disk-access' | 'ai-choice' | 'ai-provider-choice' | 'ollama-install' | 'login'
 
 interface Props {
   onComplete: () => void
@@ -10,6 +10,8 @@ export function OnboardingFlow({ onComplete }: Props) {
   const [history, setHistory] = useState<Step[]>(['notifications'])
   const step = history[history.length - 1]
   const [notifDone, setNotifDone] = useState(false)
+  const [fdaSettingsOpened, setFdaSettingsOpened] = useState(false)
+  const [fdaContinueReady, setFdaContinueReady] = useState(false)
   const [checkingOllama, setCheckingOllama] = useState(false)
   const [loginEnabled, setLoginEnabled] = useState(true)
 
@@ -26,6 +28,23 @@ export function OnboardingFlow({ onComplete }: Props) {
       window.electronAPI.setLoginItem(true)
     }
   }, [step])
+
+  useEffect(() => {
+    if (!fdaSettingsOpened) return
+    // 3-second hard fallback
+    const fallback = setTimeout(() => setFdaContinueReady(true), 3000)
+    // Poll every 1.5 s for actual FDA grant
+    const poll = setInterval(async () => {
+      const granted = await window.electronAPI.checkFullDiskAccess()
+      if (granted) { clearInterval(poll); clearTimeout(fallback); setFdaContinueReady(true) }
+    }, 1500)
+    return () => { clearInterval(poll); clearTimeout(fallback) }
+  }, [fdaSettingsOpened])
+
+  function handleOpenFdaSettings() {
+    window.electronAPI.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles')
+    setFdaSettingsOpened(true)
+  }
 
   function finish() {
     window.electronAPI.markOnboardingComplete()
@@ -74,7 +93,7 @@ export function OnboardingFlow({ onComplete }: Props) {
     await window.electronAPI.setLoginItem(next)
   }
 
-  const stepIndex = step === 'notifications' ? 0 : step === 'login' ? 2 : 1
+  const stepIndex = step === 'notifications' ? 0 : step === 'full-disk-access' ? 1 : step === 'login' ? 3 : 2
 
   return (
     <div
@@ -91,7 +110,7 @@ export function OnboardingFlow({ onComplete }: Props) {
           {/* Wordmark */}
           <div className="flex flex-col items-center gap-1.5">
             <p className="text-2xl font-semibold tracking-tight text-zinc-100">Nerion</p>
-            <p className="text-sm text-zinc-500">Let's get you set up in three quick steps.</p>
+            <p className="text-sm text-zinc-500">Let's get you set up in four quick steps.</p>
           </div>
 
           {/* ── Step 1: Notifications ── */}
@@ -124,7 +143,7 @@ export function OnboardingFlow({ onComplete }: Props) {
                     </p>
                   </div>
                   <button
-                    onClick={() => navigate('ai-choice')}
+                    onClick={() => navigate('full-disk-access')}
                     className="w-full py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-sm font-medium text-white transition-colors"
                   >
                     Continue
@@ -139,7 +158,7 @@ export function OnboardingFlow({ onComplete }: Props) {
                     Allow Notifications
                   </button>
                   <button
-                    onClick={() => navigate('ai-choice')}
+                    onClick={() => navigate('full-disk-access')}
                     className="w-full py-2 rounded-lg text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
                   >
                     Skip
@@ -149,7 +168,48 @@ export function OnboardingFlow({ onComplete }: Props) {
             </StepCard>
           )}
 
-          {/* ── Step 2: AI ── */}
+          {/* ── Step 2: Full Disk Access ── */}
+          {step === 'full-disk-access' && (
+            <StepCard
+              onBack={goBack}
+              icon={
+                <svg className="w-6 h-6 text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+                    d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                </svg>
+              }
+              title="Full Disk Access"
+              description="Nerion needs Full Disk Access to scan all folders and move files to the trash. Without it, some items like system logs, can't be cleaned and certain features won't work at full capacity."
+            >
+              <div className="flex flex-col gap-2">
+                {fdaContinueReady ? (
+                  <button
+                    onClick={() => navigate('ai-choice')}
+                    className="w-full py-2 rounded-lg bg-orange-600 hover:bg-orange-500 text-sm font-medium text-white transition-colors"
+                  >
+                    Continue
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleOpenFdaSettings}
+                    className="w-full py-2 rounded-lg bg-orange-600 hover:bg-orange-500 text-sm font-medium text-white transition-colors"
+                  >
+                    Open System Settings
+                  </button>
+                )}
+                {!fdaContinueReady && (
+                  <button
+                    onClick={() => navigate('ai-choice')}
+                    className="w-full py-2 rounded-lg text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
+                  >
+                    Skip for now
+                  </button>
+                )}
+              </div>
+            </StepCard>
+          )}
+
+          {/* ── Step 3: AI ── */}
           {step === 'ai-choice' && (
             <StepCard
               onBack={goBack}
@@ -287,7 +347,7 @@ export function OnboardingFlow({ onComplete }: Props) {
 
           {/* Step dots */}
           <div className="flex items-center justify-center gap-1.5">
-            {[0, 1, 2].map((i) => (
+            {[0, 1, 2, 3].map((i) => (
               <div
                 key={i}
                 className={[

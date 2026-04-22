@@ -719,8 +719,14 @@ export function registerIpcHandlers(): void {
         _event.sender.send('trash-progress', { path: p, success: true })
       } catch (err) {
         const msg = String(err)
-        errors.push(msg)
-        _event.sender.send('trash-progress', { path: p, success: false, error: msg })
+        // File already gone (trashed on a previous attempt) — treat as success.
+        if (msg.includes("doesn't exist") || msg.includes('does not exist') || msg.includes('ENOENT')) {
+          deletedCount += 1
+          _event.sender.send('trash-progress', { path: p, success: true })
+        } else {
+          errors.push(msg)
+          _event.sender.send('trash-progress', { path: p, success: false, error: msg })
+        }
       }
     }
 
@@ -1059,6 +1065,16 @@ What is this item and is it safe to delete?`
 
   ipcMain.handle('set-login-item', (_event, enable: boolean) => {
     app.setLoginItemSettings({ openAtLogin: enable, openAsHidden: enable })
+  })
+
+  ipcMain.handle('check-full-disk-access', async () => {
+    try {
+      // ~/Library/Safari is readable only with Full Disk Access
+      await readdir(path.join(os.homedir(), 'Library', 'Safari'))
+      return true
+    } catch {
+      return false
+    }
   })
 
   ipcMain.handle('check-ollama', async () => {

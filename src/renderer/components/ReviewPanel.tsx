@@ -567,6 +567,12 @@ export function ReviewPanel({ entries, isPremium, remainingQuota, confirmedDelet
               {error && (
                 <p className="w-full text-right text-[11px] text-amber-400 leading-relaxed">
                   {error}
+                  {error.toLowerCase().includes('permission') && (
+                    <> - grant <button
+                      onClick={() => window.electronAPI.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles')}
+                      className="underline underline-offset-2 hover:text-amber-300"
+                    >Full Disk Access</button> in System Settings</>
+                  )}
                 </p>
               )}
               <button
