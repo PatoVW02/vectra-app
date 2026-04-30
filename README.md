@@ -1,6 +1,6 @@
 # Nerion
 
-Nerion is a macOS disk space analyzer built with Electron, React, TypeScript, and a native Swift scanner.
+Nerion is a cross-platform disk space analyzer built with Electron, React, TypeScript, and a native Rust scanner.
 
 It helps users:
 
@@ -16,20 +16,21 @@ It helps users:
 - React + TypeScript
 - Tailwind CSS
 - `electron-builder` for packaging and GitHub Releases
-- Swift for the native scanner binary in `resources/scanner`
+- Rust for the native scanner binary in `resources/`
 
 ## Repo Layout
 
 - `src/main`: Electron main-process code, IPC, updater, licensing, background behavior
 - `src/renderer`: React UI
-- `resources/scanner`: Swift source for the native scanner
-- `scripts/release-all.sh`: multi-architecture release script
+- `native/scanner-rs`: Rust source for the native scanner
+- `scripts/release-mac.sh`: local macOS release script that triggers the Windows CI release
+- `scripts/release-all.sh`: multi-architecture macOS release script
 - `dist`: packaged app output
 
 ## Requirements
 
 - Node.js and npm
-- Xcode Command Line Tools with `swiftc`
+- Rust toolchain with `cargo` and `rustc`
 - macOS
 - GitHub CLI (`gh`) for `npm run release:all`
 
@@ -90,7 +91,7 @@ npm run dist:universal
 The app has two build layers:
 
 1. `npm run build` compiles the Electron main process and renderer.
-2. `npm run build:scanner*` compiles the native Swift scanner binary used by the app.
+2. `npm run build:scanner*` compiles the native Rust scanner binary used by the app.
 
 Architecture-specific scanner commands:
 
@@ -102,13 +103,13 @@ Architecture-specific scanner commands:
 
 ### Quick release
 
-For a single universal release:
+For a single universal macOS release plus a Windows CI release:
 
 ```bash
 npm run release
 ```
 
-This builds the universal scanner, packages the app, and publishes the release through `electron-builder`.
+This builds the universal macOS scanner, packages the app, publishes the macOS release through `electron-builder`, then pushes the version tag so GitHub Actions can build and publish the Windows NSIS installer.
 
 ### Full release
 
@@ -142,9 +143,9 @@ Generated release assets should include:
 3. Make sure `.env.local` contains a valid `GH_TOKEN`.
 4. Make sure `gh` is installed and authenticated.
 5. Run `npm run typecheck`.
-6. Run `npm run release:all`.
-7. Verify the GitHub Release includes the DMG/ZIP files and the three architecture-specific `*-mac.yml` assets.
-8. Install or update from the published build and verify auto-update behavior.
+6. Run `npm run release` for macOS universal + Windows CI, or `npm run release:all` for the multi-architecture macOS flow.
+7. Verify the GitHub Release includes the DMG/ZIP files, the Windows NSIS installer, and the three architecture-specific `*-mac.yml` assets when using `release:all`.
+8. Install or update from the published builds and verify auto-update behavior.
 
 ## Troubleshooting
 

@@ -78,6 +78,23 @@ export type UpdaterStatusEvent =
   | { type: 'update-downloaded'; version: string }
   | { type: 'error'; message: string }
 
+export interface PlatformInfo {
+  id: 'macos' | 'windows'
+  fileManagerName: string
+  revealActionLabel: string
+  startupLabel: string
+  startupDescription: string
+  trayLabel: string
+  trayDescription: string
+  supportsFullDiskAccess: boolean
+  fullDiskAccessLabel: string
+  fullDiskAccessDescription: string
+  notificationSettingsUrl: string | null
+  fullDiskAccessSettingsUrl: string | null
+  quickScanDefaults: string[]
+  quickScanOptions: Array<{ name: string; desc: string }>
+}
+
 declare global {
   interface Window {
     electronAPI: {
@@ -90,7 +107,7 @@ declare global {
 
       // File operations
       openDirectory: () => Promise<string | null>
-      revealInFinder: (path: string) => Promise<void>
+      revealInFileManager: (path: string) => Promise<void>
       trashEntries: (paths: string[]) => Promise<string | null>
       onTrashProgress: (cb: (data: { path: string; success: boolean; error?: string }) => void) => () => void
       getItemStats: (path: string) => Promise<ItemStats | { error: string }>
@@ -116,6 +133,7 @@ declare global {
 
       // Settings & background scan
       getSettings: () => Promise<NerionSettings>
+      getPlatformInfo: () => Promise<PlatformInfo>
       getHomeDir: () => Promise<string>
       getAppVersion: () => Promise<string>
       getAppArch: () => Promise<string>

@@ -12,13 +12,14 @@ import { useNavigation } from './hooks/useNavigation'
 import { useTreeScanner } from './hooks/useTreeScanner'
 import { isAppleMetadata, isCleanable, isDevDependency } from './utils/cleanable'
 import { isCriticalPath, isContentOnlyProtectedRoot } from './utils/criticalPaths'
-import { DiskEntry } from './types'
+import { DiskEntry, PlatformInfo } from './types'
 import { SettingsPanel } from './components/SettingsPanel'
 import { OnboardingFlow } from './components/OnboardingFlow'
 import { useLicense } from './hooks/useLicense'
 import { UpgradeModal } from './components/UpgradeModal'
 import { LicenseModal } from './components/LicenseModal'
 import { WhatsNewModal } from './components/WhatsNewModal'
+import { getDefaultQuickScanFolders, getQuickScanRootPath, resolveQuickFolderPath } from '../shared/policy'
 
 interface ContextMenuState {
   entry: DiskEntry
@@ -45,17 +46,6 @@ function SlideUpBar({ children }: { children: ReactNode }) {
 
 type ScanMode = 'quick' | 'deep'
 type ScanPhase = 'welcome' | 'departing' | 'active' | 'arriving'
-
-/** Well-known home directory folders that resolve to ~/name rather than ~/Library/name. */
-const HOME_FOLDER_NAMES = new Set(['Downloads', 'Desktop', 'Trash'])
-
-function resolveQuickFolderPath(folder: string, homeDir: string | null, quickScanPath: string | null): string | null {
-  if (!homeDir || !quickScanPath) return null
-  if (folder.startsWith('/')) return folder
-  if (folder === 'Trash') return `${homeDir}/.Trash`
-  if (HOME_FOLDER_NAMES.has(folder)) return `${homeDir}/${folder}`
-  return `${quickScanPath}/${folder}`
-}
 
 const MIN_PANEL_WIDTH = 220
 const DEFAULT_PANEL_WIDTH = 400
@@ -91,14 +81,18 @@ export function App() {
 function AppShell() {
   const MODAL_SWITCH_DELAY_MS = 200
   const [scanMode, setScanMode] = useState<ScanMode>('quick')
+  const [platformInfo, setPlatformInfo] = useState<PlatformInfo | null>(null)
   const [showDevDeps, setShowDevDeps] = useState(false)
   const [deleteImmediately, setDeleteImmediately] = useState(false)
-  const [quickScanFolders, setQuickScanFolders] = useState<string[]>(['Caches', 'Logs', 'Developer', 'Containers', 'Downloads', 'Desktop'])
+  const [quickScanFolders, setQuickScanFolders] = useState<string[]>([])
   const [homeDir, setHomeDir] = useState<string | null>(null)
   const [deleteQuotaUsed, setDeleteQuotaUsed] = useState(0)
 
   // Derived from homeDir — the ~/Library path used as quick scan root
-  const QUICK_SCAN_PATH = homeDir ? `${homeDir}/Library` : null
+  const QUICK_SCAN_PATH = useMemo(
+    () => getQuickScanRootPath(homeDir, platformInfo?.id ?? 'macos'),
+    [homeDir, platformInfo]
+  )
 
   // Load initial settings + home dir from main process (process.env.HOME is
   // not reliably available in the Vite-built renderer bundle)
@@ -106,12 +100,15 @@ function AppShell() {
     Promise.all([
       window.electronAPI.getSettings(),
       window.electronAPI.getHomeDir(),
-    ]).then(([s, home]) => {
+      window.electronAPI.getPlatformInfo(),
+    ]).then(([s, home, platform]) => {
+      const defaults = getDefaultQuickScanFolders(platform.id)
       setShowDevDeps(s.showDevDependencies ?? false)
       setDeleteImmediately(s.deleteImmediately ?? false)
-      setQuickScanFolders(s.quickScanFolders ?? ['Caches', 'Logs', 'Developer', 'Containers', 'Downloads', 'Desktop'])
+      setQuickScanFolders(s.quickScanFolders?.length ? s.quickScanFolders : defaults)
       setDeleteQuotaUsed(s.deleteQuota?.used ?? 0)
       setHomeDir(home)
+      setPlatformInfo(platform)
     })
   }, [])
   const [selectedPath, setSelectedPath] = useState('/')
@@ -167,30 +164,20 @@ function AppShell() {
   const quickScanAllowedPaths = useMemo(() => {
     if (scanMode !== 'quick' || !QUICK_SCAN_PATH) return null
     const paths = quickScanFolders
-      .map((folder) => resolveQuickFolderPath(folder, homeDir, QUICK_SCAN_PATH))
+      .map((folder) => resolveQuickFolderPath(folder, homeDir, platformInfo?.id ?? 'macos'))
       .filter((value): value is string => value !== null)
     return new Set(paths)
-  }, [scanMode, quickScanFolders, QUICK_SCAN_PATH, homeDir])
+  }, [scanMode, quickScanFolders, QUICK_SCAN_PATH, homeDir, platformInfo])
 
   // Paths to actually scan in Quick mode: ~/Library (when predefined Library folders are enabled)
   // plus any absolute custom paths that live outside of ~/Library.
   const quickScanPaths = useMemo(() => {
     if (scanMode !== 'quick' || !QUICK_SCAN_PATH) return null
-    const paths: string[] = []
-    // Library-relative folders → scan ~/Library once
-    if (quickScanFolders.some(f => !f.startsWith('/') && !HOME_FOLDER_NAMES.has(f))) paths.push(QUICK_SCAN_PATH)
-    // Home-relative well-known folders (e.g. Downloads) → scan each directly
-    for (const f of quickScanFolders) {
-      const resolved = resolveQuickFolderPath(f, homeDir, QUICK_SCAN_PATH)
-      if (!resolved || f.startsWith('/') || !HOME_FOLDER_NAMES.has(f)) continue
-      paths.push(resolved)
-    }
-    // Absolute custom paths outside ~/Library
-    for (const f of quickScanFolders) {
-      if (f.startsWith('/') && !f.startsWith(QUICK_SCAN_PATH + '/')) paths.push(f)
-    }
+    const paths = quickScanFolders
+      .map((folder) => resolveQuickFolderPath(folder, homeDir, platformInfo?.id ?? 'macos'))
+      .filter((value): value is string => value !== null)
     return paths.length > 0 ? paths : null
-  }, [scanMode, quickScanFolders, QUICK_SCAN_PATH, homeDir])
+  }, [scanMode, quickScanFolders, QUICK_SCAN_PATH, homeDir, platformInfo])
 
   const deepScanPaths = useMemo(() => {
     if (scanMode !== 'deep' || !rootPath || !homeDir) return null
@@ -223,9 +210,9 @@ function AppShell() {
     // At the quick scan root: Library subfolder entries + home-relative entries + custom absolute entries
     const libraryEntries = raw.filter(e => quickScanAllowedPaths.has(e.path))
     const homeEntries: DiskEntry[] = quickScanFolders
-      .filter(f => !f.startsWith('/') && HOME_FOLDER_NAMES.has(f) && homeDir)
+      .filter(f => !f.startsWith('/') && homeDir)
       .map(f => {
-        const resolvedPath = resolveQuickFolderPath(f, homeDir, QUICK_SCAN_PATH)
+        const resolvedPath = resolveQuickFolderPath(f, homeDir, platformInfo?.id ?? 'macos')
         if (!resolvedPath) return null
         if (!quickScanAllowedPaths.has(resolvedPath)) return null
         const children = tree.get(resolvedPath) ?? []
@@ -237,7 +224,7 @@ function AppShell() {
       .filter(f =>
         f.startsWith('/') &&
         quickScanAllowedPaths.has(f) &&
-        (!QUICK_SCAN_PATH || !f.startsWith(QUICK_SCAN_PATH + '/'))
+        (!QUICK_SCAN_PATH || !f.startsWith(QUICK_SCAN_PATH + '/') && !f.startsWith(QUICK_SCAN_PATH + '\\'))
       )
       .map(f => {
         const children = tree.get(f) ?? []
@@ -245,7 +232,7 @@ function AppShell() {
         return { name: f.split('/').pop() ?? f, path: f, sizeKB: totalKB, isDir: true }
       })
     return filterDeleted([...libraryEntries, ...homeEntries, ...customEntries].sort((a, b) => b.sizeKB - a.sizeKB))
-  }, [tree, currentPath, rootPath, quickScanAllowedPaths, quickScanFolders, QUICK_SCAN_PATH, homeDir, confirmedDeletedPaths])
+  }, [tree, currentPath, rootPath, quickScanAllowedPaths, quickScanFolders, QUICK_SCAN_PATH, homeDir, confirmedDeletedPaths, platformInfo])
 
   const allCleanable = useMemo(() => {
     const result = new Map<string, DiskEntry>()
@@ -278,7 +265,8 @@ function AppShell() {
         const isDev = isDevDependency(entry)
 
         // Direct children of a targeted Downloads folder are always cleanable
-        const parentDir = entry.path.slice(0, entry.path.lastIndexOf('/'))
+        const lastSeparator = Math.max(entry.path.lastIndexOf('/'), entry.path.lastIndexOf('\\'))
+        const parentDir = lastSeparator === -1 ? '' : entry.path.slice(0, lastSeparator)
         const isDownloadsItem = downloadsParents.size > 0
           && downloadsParents.has(parentDir)
           && entry.sizeKB > 0
@@ -450,7 +438,7 @@ function AppShell() {
 
   const handleRevealInFinder = useCallback(() => {
     if (!contextMenu) return
-    window.electronAPI.revealInFinder(contextMenu.entry.path)
+    window.electronAPI.revealInFileManager(contextMenu.entry.path)
   }, [contextMenu])
 
   const handleToggleSelect = useCallback(() => {
@@ -756,7 +744,7 @@ function AppShell() {
                     homeDir={homeDir}
                     autoSelectDevDependencies={showDevDeps}
                     onInfo={setInfoPanelEntry}
-                    onRevealInFinder={(p) => window.electronAPI.revealInFinder(p)}
+                    onRevealInFinder={(p) => window.electronAPI.revealInFileManager(p)}
                     onReview={handleSmartCleanReview}
                     initialLeftoverSelection={savedLeftoverSelection}
                     isPremium={isPremium}
@@ -844,6 +832,7 @@ function AppShell() {
           onDevDepsChange={setShowDevDeps}
           onDeleteModeChange={setDeleteImmediately}
           quickScanFolders={quickScanFolders}
+          platformInfo={platformInfo}
           onQuickScanFoldersChange={setQuickScanFolders}
           isPremium={isPremium}
           license={license}

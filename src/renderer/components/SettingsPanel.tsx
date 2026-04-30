@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
-import { NerionSettings, OllamaModel, LicenseInfo, UpdaterStatusEvent } from '../types'
+import { NerionSettings, OllamaModel, LicenseInfo, PlatformInfo, UpdaterStatusEvent } from '../types'
 import { formatSize } from '../utils/format'
 import { HeaderFrame } from './HeaderFrame'
 import { Sparkles } from 'lucide-react'
@@ -11,6 +11,7 @@ interface SettingsPanelProps {
   onDeleteModeChange: (value: boolean) => void
   quickScanFolders: string[]
   onQuickScanFoldersChange: (folders: string[]) => void
+  platformInfo: PlatformInfo | null
   isPremium: boolean
   license: LicenseInfo | null
   onUpgrade: () => void
@@ -64,21 +65,6 @@ const RECOMMENDED_MODELS = [
   { name: 'mistral',  display: 'Mistral',   size: '4.1 GB' },
   { name: 'phi3',     display: 'Phi-3 Mini', size: '2.2 GB' },
   { name: 'gemma2',   display: 'Gemma 2',   size: '5.5 GB' },
-]
-
-// Folders available in Quick Scan mode.
-// Names starting with '~/' are home-relative; others are relative to ~/Library.
-const QUICK_FOLDER_OPTIONS = [
-  { name: 'Caches',                 desc: 'App cache files' },
-  { name: 'Logs',                   desc: 'App log files' },
-  { name: 'Developer',              desc: 'Xcode DerivedData & dev tool caches' },
-  { name: 'Containers',             desc: 'App sandbox containers' },
-  { name: 'Downloads',              desc: '~/Downloads folder' },
-  { name: 'Desktop',                desc: '~/Desktop folder' },
-  { name: 'Trash',                  desc: '~/.Trash folder' },
-  { name: 'Application Support',    desc: 'Persistent app data' },
-  { name: 'Saved Application State', desc: 'Saved window & app states' },
-  { name: 'Group Containers',       desc: 'Shared app group containers' },
 ]
 
 type OllamaStatus = 'idle' | 'checking' | 'not-installed' | 'installed'
@@ -161,7 +147,7 @@ function Toggle({ on, onClick, disabled }: { on: boolean; onClick: () => void; d
   )
 }
 
-export function SettingsPanel({ onClose, onDevDepsChange, onDeleteModeChange, quickScanFolders, onQuickScanFoldersChange, isPremium, license, onUpgrade, onLicense, onWhatsNew }: SettingsPanelProps) {
+export function SettingsPanel({ onClose, onDevDepsChange, onDeleteModeChange, quickScanFolders, onQuickScanFoldersChange, platformInfo, isPremium, license, onUpgrade, onLicense, onWhatsNew }: SettingsPanelProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>('general')
   const [settings, setSettings] = useState<NerionSettings | null>(null)
   const [saving, setSaving] = useState(false)
@@ -193,6 +179,7 @@ export function SettingsPanel({ onClose, onDevDepsChange, onDeleteModeChange, qu
   const [pullProgress, setPullProgress] = useState<number | null>(null)
   const [pullStatus, setPullStatus] = useState('')
   const [pullError, setPullError] = useState<string | null>(null)
+  const quickFolderOptions = platformInfo?.quickScanOptions ?? []
 
   // Keep a ref so pull-done callback can access latest settings without stale closure
   const settingsRef = useRef<NerionSettings | null>(null)
@@ -347,14 +334,18 @@ export function SettingsPanel({ onClose, onDevDepsChange, onDeleteModeChange, qu
   }
 
   const handleOpenFdaSettings = useCallback(() => {
-    window.electronAPI.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles')
+    if (platformInfo?.fullDiskAccessSettingsUrl) {
+      window.electronAPI.openExternal(platformInfo.fullDiskAccessSettingsUrl)
+    }
     setFdaPolling(true)
-  }, [])
+  }, [platformInfo])
 
   const handleOpenNotifSettings = useCallback(() => {
-    window.electronAPI.openExternal('x-apple.systempreferences:com.apple.preference.notifications')
+    if (platformInfo?.notificationSettingsUrl) {
+      window.electronAPI.openExternal(platformInfo.notificationSettingsUrl)
+    }
     setNotifPolling(true)
-  }, [])
+  }, [platformInfo])
 
   const bg = settings?.backgroundScan
   const totalKB = (bg?.lastScanResults ?? []).reduce((s, r) => s + r.sizeKB, 0)
@@ -998,7 +989,7 @@ export function SettingsPanel({ onClose, onDevDepsChange, onDeleteModeChange, qu
                         <p className="text-[10px] font-semibold text-zinc-600 uppercase tracking-widest">Predefined folders</p>
                       </div>
 
-                      {QUICK_FOLDER_OPTIONS.map(({ name, desc }) => {
+                      {quickFolderOptions.map(({ name, desc }) => {
                         const checked = quickScanFolders.includes(name)
                         return (
                           <button
@@ -1103,6 +1094,7 @@ export function SettingsPanel({ onClose, onDevDepsChange, onDeleteModeChange, qu
           <div className="rounded-xl bg-white/[0.03] border border-white/[0.06] divide-y divide-white/[0.04]">
 
             {/* Full Disk Access */}
+            {platformInfo?.supportsFullDiskAccess && (
             <div className="flex items-center justify-between gap-3 px-4 py-4">
               <div className="flex items-center gap-3 min-w-0">
                 <div className="w-8 h-8 rounded-lg bg-white/[0.05] flex items-center justify-center shrink-0">
@@ -1112,8 +1104,8 @@ export function SettingsPanel({ onClose, onDevDepsChange, onDeleteModeChange, qu
                   </svg>
                 </div>
                 <div className="min-w-0">
-                  <p className="text-xs font-medium text-zinc-300">Full Disk Access</p>
-                  <p className="text-[11px] text-zinc-600 mt-0.5 leading-snug">Required to scan and clean all folders</p>
+                  <p className="text-xs font-medium text-zinc-300">{platformInfo.fullDiskAccessLabel}</p>
+                  <p className="text-[11px] text-zinc-600 mt-0.5 leading-snug">{platformInfo.fullDiskAccessDescription}</p>
                 </div>
               </div>
               <div className="shrink-0">
@@ -1139,6 +1131,7 @@ export function SettingsPanel({ onClose, onDevDepsChange, onDeleteModeChange, qu
                 )}
               </div>
             </div>
+            )}
 
             {/* Notifications */}
             <div className="flex items-center justify-between gap-3 px-4 py-4">
@@ -1205,7 +1198,7 @@ export function SettingsPanel({ onClose, onDevDepsChange, onDeleteModeChange, qu
               <div className="min-w-0">
                 <p className="text-sm text-zinc-200 font-medium">Open at startup</p>
                 <p className="text-xs text-zinc-500 mt-1 leading-relaxed">
-                  Launch Nerion silently in the background when your Mac starts so background scans can run without opening the app.
+                  {platformInfo?.startupDescription ?? 'Launch Nerion in the background when your computer starts so background scans can run without opening the app.'}
                 </p>
               </div>
               <Toggle on={!!loginItem} onClick={toggleLoginItem} disabled={loginItem === null} />
@@ -1320,14 +1313,14 @@ export function SettingsPanel({ onClose, onDevDepsChange, onDeleteModeChange, qu
         {activeTab === 'general' && (
         <section>
           <h2 className="text-[10px] font-semibold text-zinc-600 uppercase tracking-widest mb-3">
-            Menu Bar
+            {platformInfo?.trayLabel ?? 'Tray'}
           </h2>
           <div className="rounded-xl bg-white/[0.03] border border-white/[0.06]">
             <div className="flex items-start justify-between gap-4 px-4 py-4">
               <div className="min-w-0">
-                <p className="text-sm text-zinc-200 font-medium">Show in menu bar</p>
+                <p className="text-sm text-zinc-200 font-medium">{platformInfo?.id === 'windows' ? 'Show in system tray' : 'Show in menu bar'}</p>
                 <p className="text-xs text-zinc-500 mt-1 leading-relaxed">
-                  Display the Nerion icon in the macOS menu bar for quick access and scan status.
+                  {platformInfo?.trayDescription ?? 'Display the Nerion icon for quick access and scan status.'}
                 </p>
               </div>
               <Toggle on={!!settings?.showMenuBarIcon} onClick={toggleMenuBarIcon} />

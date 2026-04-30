@@ -51,7 +51,7 @@ export function ContextMenu({
         className="w-full px-3 py-2 text-left text-sm text-zinc-200 hover:bg-white/10 transition-colors"
         onClick={() => { onRevealInFinder(); onClose() }}
       >
-        Reveal in Finder
+        Show in File Manager
       </button>
       <button
         disabled={!canSelect && !isSelected}

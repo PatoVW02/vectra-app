@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { DiskEntry } from '../main/scanner'
 import type { UpdaterStatusEvent } from '../main/updater'
+import type { PlatformInfo } from '../renderer/types'
 
 // Single persistent listeners — callbacks are swapped, never re-registered.
 const ollamaCallbacks: {
@@ -36,7 +37,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ── File operations ───────────────────────────────────────────────────────
   openDirectory: () => ipcRenderer.invoke('open-directory'),
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
-  revealInFinder: (path: string) => ipcRenderer.invoke('reveal-in-finder', path),
+  revealInFileManager: (path: string) => ipcRenderer.invoke('reveal-in-file-manager', path),
   trashEntries: (paths: string[]) => ipcRenderer.invoke('trash-entries', paths),
   onTrashProgress: (cb: (data: { path: string; success: boolean; error?: string }) => void) => {
     const handler = (_: Electron.IpcRendererEvent, data: { path: string; success: boolean; error?: string }) => cb(data)
@@ -69,6 +70,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // ── Settings & background scan ────────────────────────────────────────────
   getSettings: () => ipcRenderer.invoke('get-settings'),
+  getPlatformInfo: () => ipcRenderer.invoke('get-platform-info') as Promise<PlatformInfo>,
   getHomeDir: () => ipcRenderer.invoke('get-home-dir') as Promise<string>,
   getAppVersion: () => ipcRenderer.invoke('get-app-version') as Promise<string>,
   getAppArch: () => ipcRenderer.invoke('get-app-arch') as Promise<string>,

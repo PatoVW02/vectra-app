@@ -9,6 +9,12 @@ import { loadSettings, saveSettings, patchSettings, NerionSettings } from './set
 import { rebuildTrayMenu, scheduleBackgroundScan, stopBackgroundScan, runBackgroundScan, updateLastScanPath, setTrayVisibility, testNotification } from './background'
 import { getLicenseInfo, activateLicense, revalidateLicense, deactivateLicense } from './license'
 import { runAutoUpdateCheck, installDownloadedUpdateNow } from './updater'
+import { getPlatformMeta, revealInFileManager, supportsFullDiskAccess } from './platform'
+import {
+  getDefaultQuickScanFolders,
+  isContentOnlyProtectedRoot as sharedIsContentOnlyProtectedRoot,
+  isCriticalPath as sharedIsCriticalPath,
+} from '../shared/policy'
 
 const execFileAsync = promisify(execFile)
 
@@ -20,6 +26,7 @@ let ollamaUserCancelled = false
 const FREE_DELETE_LIMIT_PER_MONTH = 15
 
 async function checkNotificationPermissionStatus(): Promise<boolean | null> {
+  if (process.platform === 'win32') return Notification.isSupported() ? true : null
   // Read the user-level TCC database — no FDA required, it lives in ~/Library.
   // Returns true (granted), false (denied), or null (no entry yet).
   try {
@@ -102,116 +109,11 @@ function isProtectedAppleSystemApp(itemPath: string): boolean {
 }
 
 function isContentOnlyProtectedRoot(itemPath: string): boolean {
-  return /^\/Users\/[^/]+\/(Desktop|Downloads|Documents|Movies|Music|Pictures|\.Trash)$/.test(itemPath)
-    || /^\/Users\/[^/]+\/Library\/(Caches|Logs|HTTPStorages|Saved Application State|WebKit)$/.test(itemPath)
+  return sharedIsContentOnlyProtectedRoot(itemPath, process.platform === 'win32' ? 'windows' : 'macos', os.homedir())
 }
 
 function isProtectedDeletePath(itemPath: string): boolean {
-  const home = os.homedir()
-  const normalized = itemPath.replace(/\/+$/, '')
-
-  const exactProtected = new Set([
-    '/',
-    '/Users',
-    '/System',
-    '/System/Library',
-    '/Library',
-    '/Applications',
-    '/bin',
-    '/lib',
-    '/sbin',
-    '/usr',
-    '/usr/bin',
-    '/usr/lib',
-    '/usr/local',
-    '/etc',
-    '/var',
-    '/private',
-    '/private/etc',
-    '/private/var',
-    '/private/tmp',
-    '/Volumes',
-    '/Network',
-    '/cores',
-    home,
-    `${home}/Library`,
-    `${home}/Applications`,
-    `${home}/Library/Application Scripts`,
-    `${home}/Library/Application Support`,
-    `${home}/Library/Assistants`,
-    `${home}/Library/Audio`,
-    `${home}/Library/Autosave Information`,
-    `${home}/Library/ColorPickers`,
-    `${home}/Library/ColorSync`,
-    `${home}/Library/Components`,
-    `${home}/Library/Containers`,
-    `${home}/Library/Contextual Menu Items`,
-    `${home}/Library/Cookies`,
-    `${home}/Library/Developer`,
-    `${home}/Library/Dictionaries`,
-    `${home}/Library/Documentation`,
-    `${home}/Library/Extensions`,
-    `${home}/Library/Favorites`,
-    `${home}/Library/Fonts`,
-    `${home}/Library/Group Containers`,
-    `${home}/Library/Internet Plug-ins`,
-    `${home}/Library/Keyboards`,
-    `${home}/Library/Keychains`,
-    `${home}/Library/LaunchAgents`,
-    `${home}/Library/LaunchDaemons`,
-    `${home}/Library/Mail`,
-    `${home}/Library/Messages`,
-    `${home}/Library/Mobile Documents`,
-    `${home}/Library/PreferencePanes`,
-    `${home}/Library/Preferences`,
-    `${home}/Library/Printers`,
-    `${home}/Library/QuickLook`,
-    `${home}/Library/QuickTime`,
-    `${home}/Library/Safari`,
-    `${home}/Library/Scripting Additions`,
-    `${home}/Library/Sounds`,
-    `${home}/Library/CloudStorage`,
-    `${home}/Desktop`,
-    `${home}/Documents`,
-    `${home}/Downloads`,
-    `${home}/Movies`,
-    `${home}/Music`,
-    `${home}/Pictures`,
-    `${home}/.Trash`,
-    `${home}/Library/Caches`,
-    `${home}/Library/Logs`,
-    `${home}/Library/HTTPStorages`,
-    `${home}/Library/Saved Application State`,
-    `${home}/Library/WebKit`,
-  ])
-
-  if (exactProtected.has(normalized)) return true
-  if (isProtectedAppleSystemApp(normalized)) return true
-
-  const blockedPrefixes = [
-    '/System/',
-    '/Library/',
-    '/usr/',
-    '/var/',
-    '/private/',
-    '/bin/',
-    '/lib/',
-    '/sbin/',
-    `${home}/Library/Containers/`,
-    `${home}/Library/CloudStorage/`,
-    `${home}/Library/Fonts/`,
-    `${home}/Library/Group Containers/`,
-    `${home}/Library/Keychains/`,
-    `${home}/Library/Mail/`,
-    `${home}/Library/Messages/`,
-    `${home}/Library/Mobile Documents/`,
-    `${home}/Library/Safari/`,
-  ]
-
-  if (blockedPrefixes.some((prefix) => normalized.startsWith(prefix))) return true
-  if (/^\/Users\/[^/]+$/.test(normalized)) return true
-  if (isContentOnlyProtectedRoot(normalized)) return true
-  return false
+  return sharedIsCriticalPath(itemPath, process.platform === 'win32' ? 'windows' : 'macos', os.homedir())
 }
 
 function formatSizeForPrompt(sizeKB: number): string {
@@ -332,6 +234,37 @@ function getMacOSPathContext(itemPath: string): string {
   }
 
   return ''
+}
+
+function getWindowsPathContext(itemPath: string): string {
+  const normalized = itemPath.replace(/\//g, '\\')
+  const lowerPath = normalized.toLowerCase()
+
+  const knownPaths: Array<{ match: string | RegExp; description: string }> = [
+    { match: /^c:\\$/, description: 'The root of the Windows system drive. Deleting it would make the machine unusable.' },
+    { match: 'C:\\Windows', description: 'Core Windows operating system files. Never delete anything here manually.' },
+    { match: 'C:\\Program Files', description: 'Installed 64-bit applications. Deleting items here uninstalls or breaks apps.' },
+    { match: 'C:\\Program Files (x86)', description: 'Installed 32-bit applications. Deleting items here uninstalls or breaks apps.' },
+    { match: 'C:\\ProgramData', description: 'Shared application data for all users. Often required for installed apps to keep working.' },
+    { match: /\\AppData\\Local\\Temp/i, description: 'Temporary files for Windows and installed apps. Usually safe to delete if not currently in use.' },
+    { match: /\\AppData\\Local\\Packages/i, description: 'Microsoft Store app packages and caches. Deleting items here can reset app state.' },
+    { match: /\\AppData\\Roaming/i, description: 'Per-user app settings and data that roam with the account. Usually keep unless you know the app is gone.' },
+    { match: /\\Downloads$/i, description: 'A personal downloads folder. Review carefully before deleting because it often contains user files.' },
+    { match: /\\Desktop$/i, description: 'A personal desktop folder. Review carefully before deleting because it often contains user files.' },
+    { match: '\\$Recycle.Bin', description: 'The Recycle Bin store for deleted files. Individual contents are generally safe to delete permanently.' },
+  ]
+
+  for (const { match, description } of knownPaths) {
+    if ((typeof match === 'string' && lowerPath.startsWith(match.toLowerCase())) || (match instanceof RegExp && match.test(normalized))) {
+      return description
+    }
+  }
+
+  return ''
+}
+
+function getPathContext(itemPath: string): string {
+  return process.platform === 'win32' ? getWindowsPathContext(itemPath) : getMacOSPathContext(itemPath)
 }
 
 /** Infer a human-readable app name from a macOS bundle ID or .app name. */
@@ -975,8 +908,8 @@ export function registerIpcHandlers(): void {
     shell.openExternal(url)
   })
 
-  ipcMain.handle('reveal-in-finder', (_event, filePath: string) => {
-    shell.showItemInFolder(filePath)
+  ipcMain.handle('reveal-in-file-manager', (_event, filePath: string) => {
+    revealInFileManager(filePath)
   })
 
   ipcMain.handle('trash-entries', async (_event, paths: string[]) => {
@@ -1198,7 +1131,7 @@ export function registerIpcHandlers(): void {
   }
 
   /** System-level persona for the AI — shared across cloud and Ollama. */
-  const AI_SYSTEM_PROMPT = `You are a macOS storage expert built into a disk-cleaner app. Your job is to analyze a single file or folder and give the user a concise, accurate verdict on what it is and whether deleting it is safe. You reason strictly from the actual path provided — never assume a path is in a different location than stated.
+  const AI_SYSTEM_PROMPT = `You are a storage expert built into a disk-cleaner app. Your job is to analyze a single file or folder and give the user a concise, accurate verdict on what it is and whether deleting it is safe. You reason strictly from the actual path provided — never assume a path is in a different location than stated.
 
 Rules:
 - Plain prose only. No markdown, no bullet points, no headings.
@@ -1208,15 +1141,24 @@ Rules:
 
   /** Build the user-turn prompt for a given disk item. */
   function buildAnalysisPrompt(payload: { path: string; name: string; isDir: boolean; sizeKB: number }): string {
-    const pathContext = getMacOSPathContext(payload.path)
-    return `Analyze this macOS disk item:
+    const platformLabel = process.platform === 'win32' ? 'Windows' : 'macOS'
+    const pathContext = getPathContext(payload.path)
+    return `Analyze this ${platformLabel} disk item:
 
 Name: ${payload.name}
 Path: ${payload.path}
 Type: ${payload.isDir ? 'Folder' : 'File'}
 Size: ${formatSizeForPrompt(payload.sizeKB)}
 ${pathContext ? `Path context: ${pathContext}\n` : ''}
-macOS path reference (use this to reason accurately — match the actual path above):
+${process.platform === 'win32'
+? `Windows path reference (use this to reason accurately — match the actual path above):
+- C:\\Windows  C:\\Program Files  C:\\Program Files (x86)  C:\\ProgramData → system or installed-app data. Usually keep.
+- C:\\Users\\<name>\\AppData\\Local\\Temp → temporary files. Usually safe to delete.
+- C:\\Users\\<name>\\AppData\\Roaming → app settings and user data. Usually keep.
+- C:\\Users\\<name>\\Downloads  Desktop  Documents  Pictures  Music  Videos → personal files. Review carefully before deleting.
+- C:\\$Recycle.Bin → deleted-file storage. Contents are usually safe to delete permanently.
+- node_modules  .gradle  target  build  dist (inside project folders) → build/dependency dirs. Safe to delete; regenerated by the build tool.`
+: `macOS path reference (use this to reason accurately — match the actual path above):
 - /System  /usr  /bin  /sbin  /private/etc  /private/var → core OS. Never delete.
 - /Library (system-level) → system app support, fonts, extensions. Usually required.
 - /Applications → installed apps. Delete only if you want to uninstall.
@@ -1231,7 +1173,7 @@ macOS path reference (use this to reason accurately — match the actual path ab
 - ~/Library/Developer/CoreSimulator → iOS Simulator data. Large; safe to delete if not actively using simulators.
 - node_modules  .gradle  target  build  dist (inside project folders) → build/dependency dirs. Safe to delete; regenerated by the build tool.
 - ~/Documents  ~/Desktop  ~/Downloads  ~/Movies  ~/Music  ~/Pictures → personal files. Never delete.
-- /Users → parent of all home folders. Never delete.
+- /Users → parent of all home folders. Never delete.`}
 
 What is this item and is it safe to delete?`
   }
@@ -1304,7 +1246,7 @@ What is this item and is it safe to delete?`
                   path:         payload.path,
                   is_directory: payload.isDir ? 'true' : 'false',
                   size:         formatSizeForPrompt(payload.sizeKB),
-                  path_context: getMacOSPathContext(payload.path),
+                  path_context: getPathContext(payload.path),
                 },
               },
             }),
@@ -1359,6 +1301,7 @@ What is this item and is it safe to delete?`
 
   // ── Settings ───────────────────────────────────────────────────────────────
   ipcMain.handle('get-settings', () => loadSettings())
+  ipcMain.handle('get-platform-info', () => getPlatformMeta())
   ipcMain.handle('get-home-dir', () => os.homedir())
   ipcMain.handle('get-app-version', () => app.getVersion())
   ipcMain.handle('get-app-arch', () => process.arch)
@@ -1401,9 +1344,6 @@ What is this item and is it safe to delete?`
   })
 
   ipcMain.handle('request-notification-permission', () => {
-    // Showing a notification triggers the native macOS permission dialog on production builds.
-    // If already authorized the notification simply appears; if denied the user sees nothing
-    // and can fall back to opening System Settings manually.
     if (Notification.isSupported()) {
       new Notification({
         title: 'Nerion',
@@ -1425,6 +1365,7 @@ What is this item and is it safe to delete?`
   })
 
   ipcMain.handle('check-full-disk-access', async () => {
+    if (!supportsFullDiskAccess()) return true
     try {
       // /Library/Application Support/com.apple.TCC is readable only with Full Disk Access
       // and is guaranteed to exist on all macOS systems.

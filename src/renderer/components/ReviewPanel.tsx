@@ -572,9 +572,14 @@ export function ReviewPanel({ entries, isPremium, deleteImmediately, remainingQu
                   {error}
                   {error.toLowerCase().includes('permission') && (
                     <> - grant <button
-                      onClick={() => window.electronAPI.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles')}
+                      onClick={async () => {
+                        const platformInfo = await window.electronAPI.getPlatformInfo()
+                        if (platformInfo.fullDiskAccessSettingsUrl) {
+                          window.electronAPI.openExternal(platformInfo.fullDiskAccessSettingsUrl)
+                        }
+                      }}
                       className="underline underline-offset-2 hover:text-amber-300"
-                    >Full Disk Access</button> in System Settings</>
+                    >file access settings</button> in system settings</>
                   )}
                 </p>
               )}

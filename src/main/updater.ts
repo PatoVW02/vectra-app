@@ -35,6 +35,12 @@ function detectBuildArch(): 'universal' | 'arm64' | 'x64' {
   return process.arch === 'arm64' ? 'arm64' : 'x64'
 }
 
+function getUpdateChannel(): string | null {
+  if (process.platform === 'darwin') return detectBuildArch()
+  if (process.platform === 'win32') return process.arch === 'arm64' ? 'arm64' : 'x64'
+  return null
+}
+
 let listenersRegistered = false
 let checkInFlight = false
 let downloadedUpdateReady = false
@@ -111,7 +117,7 @@ function ensureUpdaterListeners(): void {
 
 export async function runAutoUpdateCheck(reason: 'startup' | 'settings-enabled' | 'scheduled' | 'manual' = 'startup'): Promise<boolean> {
   if (!app.isPackaged) return false
-  if (process.platform !== 'darwin') return false
+  if (!['darwin', 'win32'].includes(process.platform)) return false
 
   const settings = loadSettings()
   if (reason !== 'manual' && !settings.autoUpdateEnabled) return false
@@ -126,10 +132,11 @@ export async function runAutoUpdateCheck(reason: 'startup' | 'settings-enabled' 
 
     autoUpdater.autoDownload = true
     autoUpdater.autoInstallOnAppQuit = true
-    autoUpdater.channel = detectBuildArch()
+    const channel = getUpdateChannel()
+    if (channel) autoUpdater.channel = channel
     downloadedUpdateReady = false
 
-    console.log(`[Nerion] Auto-update check (${reason}): channel=${autoUpdater.channel}, checking from ${currentVersion}.`)
+    console.log(`[Nerion] Auto-update check (${reason}): channel=${autoUpdater.channel ?? 'default'}, checking from ${currentVersion}.`)
     const result = await autoUpdater.checkForUpdates()
     const nextVersion = result?.updateInfo?.version
     if (!nextVersion || compareSemver(nextVersion, currentVersion) <= 0) {

@@ -1,0 +1,1 @@
+/Users/patricio/Development/Personal/Apps/Nerion/App/native/scanner-rs/target/aarch64-apple-darwin/release/scanner-bin: /Users/patricio/Development/Personal/Apps/Nerion/App/native/scanner-rs/src/main.rs

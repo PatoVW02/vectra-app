@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import type { PlatformInfo } from '../types'
 
 type Step = 'notifications' | 'full-disk-access' | 'ai-choice' | 'ai-provider-choice' | 'ollama-install' | 'login'
 
@@ -7,6 +8,7 @@ interface Props {
 }
 
 export function OnboardingFlow({ onComplete }: Props) {
+  const [platformInfo, setPlatformInfo] = useState<PlatformInfo | null>(null)
   const [history, setHistory] = useState<Step[]>(['notifications'])
   const step = history[history.length - 1]
   const [notifDone, setNotifDone] = useState(false)
@@ -34,6 +36,7 @@ export function OnboardingFlow({ onComplete }: Props) {
   }, [step])
 
   useEffect(() => {
+    window.electronAPI.getPlatformInfo().then(setPlatformInfo).catch(() => {})
     window.electronAPI.checkNotificationPermission().then((granted) => {
       setNotifGranted(granted)
       setNotifDone(granted === true)
@@ -56,7 +59,9 @@ export function OnboardingFlow({ onComplete }: Props) {
   }, [fdaSettingsOpened])
 
   function handleOpenFdaSettings() {
-    window.electronAPI.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles')
+    if (platformInfo?.fullDiskAccessSettingsUrl) {
+      window.electronAPI.openExternal(platformInfo.fullDiskAccessSettingsUrl)
+    }
     setFdaSettingsOpened(true)
   }
 
@@ -66,7 +71,7 @@ export function OnboardingFlow({ onComplete }: Props) {
     const appPath = exePath.includes('.app/Contents/')
       ? exePath.split('.app/Contents/')[0] + '.app'
       : exePath
-    window.electronAPI.revealInFinder(appPath)
+    window.electronAPI.revealInFileManager(appPath)
   }
 
   function finish() {
@@ -175,17 +180,21 @@ export function OnboardingFlow({ onComplete }: Props) {
                       <p className="text-xs text-zinc-400 leading-relaxed">
                         If you didn't see a prompt, enable it in{' '}
                         <button
-                          onClick={() => window.electronAPI.openExternal('x-apple.systempreferences:com.apple.preference.notifications')}
+                          onClick={() => {
+                            if (platformInfo?.notificationSettingsUrl) {
+                              window.electronAPI.openExternal(platformInfo.notificationSettingsUrl)
+                            }
+                          }}
                           className="text-blue-400 hover:text-blue-300 underline underline-offset-2"
                         >
-                          System Settings → Notifications
+                          {platformInfo?.id === 'windows' ? 'Windows Settings → Notifications' : 'System Settings → Notifications'}
                         </button>
                         .
                       </p>
                     </div>
                   )}
                   <button
-                    onClick={() => navigate('full-disk-access')}
+                    onClick={() => navigate(platformInfo?.supportsFullDiskAccess ? 'full-disk-access' : 'ai-choice')}
                     className="w-full py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-sm font-medium text-white transition-colors"
                   >
                     Continue
@@ -201,7 +210,7 @@ export function OnboardingFlow({ onComplete }: Props) {
                     {notifChecking ? 'Checking…' : 'Allow Notifications'}
                   </button>
                   <button
-                    onClick={() => navigate('full-disk-access')}
+                    onClick={() => navigate(platformInfo?.supportsFullDiskAccess ? 'full-disk-access' : 'ai-choice')}
                     className="w-full py-2 rounded-lg text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
                   >
                     Skip
@@ -212,7 +221,7 @@ export function OnboardingFlow({ onComplete }: Props) {
           )}
 
           {/* ── Step 2: Full Disk Access ── */}
-          {step === 'full-disk-access' && (
+          {step === 'full-disk-access' && platformInfo?.supportsFullDiskAccess && (
             <StepCard
               onBack={goBack}
               icon={
@@ -221,8 +230,8 @@ export function OnboardingFlow({ onComplete }: Props) {
                     d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
                 </svg>
               }
-              title="Full Disk Access"
-              description="Nerion needs Full Disk Access to scan all folders and move files to the trash. Without it, some items like system logs, can't be cleaned and certain features won't work at full capacity."
+              title={platformInfo.fullDiskAccessLabel}
+              description="Nerion needs elevated file access to scan all folders and move files to the trash. Without it, some protected locations can't be cleaned and certain features won't work at full capacity."
             >
               <div className="flex flex-col gap-2">
                 {window.electronAPI.isDev && (
@@ -235,7 +244,7 @@ export function OnboardingFlow({ onComplete }: Props) {
                       onClick={handleRevealElectronApp}
                       className="self-start text-xs text-amber-400 hover:text-amber-300 underline underline-offset-2 transition-colors"
                     >
-                      Reveal Electron.app in Finder →
+                      {platformInfo.revealActionLabel} →
                     </button>
                   </div>
                 )}

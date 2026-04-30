@@ -1,6 +1,8 @@
 import { app } from 'electron'
 import { join } from 'path'
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
+import { getDefaultQuickScanFolders } from '../shared/policy'
+import { getAppPlatform } from './platform'
 
 export interface BackgroundScanSettings {
   enabled: boolean
@@ -22,7 +24,7 @@ export interface NerionSettings {
   showDevDependencies: boolean
   /** 'cloud' = OpenAI (default); 'ollama' = local Ollama */
   aiMode: 'cloud' | 'ollama'
-  /** Folder names (relative to ~/Library) included in Quick Scan mode. */
+  /** Platform-specific quick scan folder identifiers or absolute paths. */
   quickScanFolders: string[]
   /** Absolute paths the user has added via the folder picker. */
   customQuickScanFolders: string[]
@@ -42,7 +44,9 @@ function currentMonthKey(): string {
   return `${now.getFullYear()}-${month}`
 }
 
-const DEFAULTS: NerionSettings = {
+function buildDefaults(): NerionSettings {
+  const quickScanDefaults = getDefaultQuickScanFolders(getAppPlatform())
+  return {
   backgroundScan: {
     enabled: false,
     intervalHours: 168,
@@ -59,7 +63,7 @@ const DEFAULTS: NerionSettings = {
   onboardingComplete: false,
   showDevDependencies: false,
   aiMode: 'cloud',
-  quickScanFolders: ['Caches', 'Logs', 'Developer', 'Containers', 'Downloads', 'Desktop', 'Trash'],
+  quickScanFolders: quickScanDefaults,
   customQuickScanFolders: [],
   lastManualScanTime: null,
   lastManualScanFoundKB: 0,
@@ -69,6 +73,7 @@ const DEFAULTS: NerionSettings = {
     monthKey: currentMonthKey(),
     used: 0,
   }
+}
 }
 
 function settingsPath(): string {
@@ -85,18 +90,22 @@ export function loadSettings(): NerionSettings {
       Number.isFinite(parsed.deleteQuota.used)
 
     const merged: NerionSettings = {
-      ...DEFAULTS,
+      ...buildDefaults(),
       ...parsed,
-      backgroundScan: { ...DEFAULTS.backgroundScan, ...parsed.backgroundScan },
-      deleteQuota: { ...DEFAULTS.deleteQuota, ...parsed.deleteQuota },
+      backgroundScan: { ...buildDefaults().backgroundScan, ...parsed.backgroundScan },
+      deleteQuota: { ...buildDefaults().deleteQuota, ...parsed.deleteQuota },
     }
 
     let mutated = false
-    if (!merged.quickScanTrashConfigured) {
+    const currentDefaults = getDefaultQuickScanFolders(getAppPlatform())
+    if (!merged.quickScanTrashConfigured && getAppPlatform() === 'macos') {
       if (!merged.quickScanFolders.includes('Trash')) {
         merged.quickScanFolders = [...merged.quickScanFolders, 'Trash']
       }
       merged.quickScanTrashConfigured = true
+      mutated = true
+    } else if (!merged.quickScanFolders?.length) {
+      merged.quickScanFolders = currentDefaults
       mutated = true
     }
 
@@ -114,9 +123,9 @@ export function loadSettings(): NerionSettings {
     return merged
   } catch {
     return {
-      ...DEFAULTS,
-      backgroundScan: { ...DEFAULTS.backgroundScan },
-      deleteQuota: { ...DEFAULTS.deleteQuota },
+      ...buildDefaults(),
+      backgroundScan: { ...buildDefaults().backgroundScan },
+      deleteQuota: { ...buildDefaults().deleteQuota },
     }
   }
 }

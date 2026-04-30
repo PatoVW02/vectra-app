@@ -4,6 +4,8 @@ import { is } from '@electron-toolkit/utils'
 import { scanDirectoryStreaming, DiskEntry } from './scanner'
 import { loadSettings, patchSettings } from './settings'
 import * as os from 'os'
+import { getDefaultQuickScanFolders, isCleanable as sharedIsCleanable, isDevDependency as sharedIsDevDependency, resolveQuickFolderPath } from '../shared/policy'
+import { getAppPlatform } from './platform'
 
 const CLEANABLE_NAMES = new Set(['.cache', '.tmp', 'tmp', 'temp', '.temp', 'logs', 'deriveddata'])
 const DEV_DEPENDENCY_NAMES = new Set([
@@ -36,22 +38,11 @@ const MANAGED_PATH_SUBSTRINGS = [
   '/Library/Containers/',
 ]
 function isCleanableEntry(e: DiskEntry): boolean {
-  if (!e.isDir || !CLEANABLE_NAMES.has(e.name.toLowerCase())) return false
-  for (const prefix of SYSTEM_PATH_PREFIXES) {
-    if (e.path.startsWith(prefix)) return false
-  }
-  return !e.path.includes('/Library/Containers/')
+  return sharedIsCleanable(e, getAppPlatform())
 }
 
 function isDevDependencyEntry(e: DiskEntry): boolean {
-  if (!DEV_DEPENDENCY_NAMES.has(e.name.toLowerCase())) return false
-  for (const prefix of SYSTEM_PATH_PREFIXES) {
-    if (e.path.startsWith(prefix)) return false
-  }
-  for (const sub of MANAGED_PATH_SUBSTRINGS) {
-    if (e.path.includes(sub)) return false
-  }
-  return true
+  return sharedIsDevDependency(e, getAppPlatform())
 }
 
 function fmtKB(kb: number): string {
@@ -257,35 +248,18 @@ export async function runBackgroundScan(): Promise<void> {
   if (scanning) return
   const settings = loadSettings()
   const home = os.homedir()
-  const libraryRoot = join(home, 'Library')
+  const platform = getAppPlatform()
 
-  // Always scan the configured quick scan folders for speed and lower I/O impact.
-  // Fall back to the default set if the setting is missing or empty.
   const folders = settings.quickScanFolders?.length
     ? settings.quickScanFolders
-    : ['Caches', 'Logs', 'Developer', 'Containers', 'Downloads', 'Desktop']
-  // Folders starting with '/' are absolute custom paths.
-  // Well-known home folder names (e.g. 'Downloads', 'Desktop') resolve to ~/name.
-  // Everything else resolves to ~/Library/name.
-  const HOME_FOLDER_NAMES = new Set(['Downloads', 'Desktop'])
-  const allowedPaths = new Set(folders.map(f =>
-    f.startsWith('/') ? f : HOME_FOLDER_NAMES.has(f) ? join(home, f) : join(libraryRoot, f)
-  ))
+    : getDefaultQuickScanFolders(platform)
+  const allowedPaths = new Set(
+    folders
+      .map((folder) => resolveQuickFolderPath(folder, home, platform))
+      .filter((value): value is string => value !== null)
+  )
 
-  // Mirror renderer quick-scan path strategy:
-  // 1) scan ~/Library once if any Library-relative folder is enabled,
-  // 2) scan home-relative folders (Downloads/Desktop) directly,
-  // 3) scan absolute custom paths outside ~/Library directly.
-  const scanPaths: string[] = []
-  if (folders.some(f => !f.startsWith('/') && !HOME_FOLDER_NAMES.has(f))) {
-    scanPaths.push(libraryRoot)
-  }
-  for (const f of folders) {
-    if (!f.startsWith('/') && HOME_FOLDER_NAMES.has(f)) scanPaths.push(join(home, f))
-  }
-  for (const f of folders) {
-    if (f.startsWith('/') && !f.startsWith(`${libraryRoot}/`)) scanPaths.push(f)
-  }
+  const scanPaths = [...allowedPaths]
 
   const dedupedScanPaths: string[] = []
   const seen = new Set<string>()
@@ -297,8 +271,11 @@ export async function runBackgroundScan(): Promise<void> {
 
   const allowedPrefixes = [...allowedPaths]
   const downloadsParents = new Set<string>()
+  const trashParents = new Set<string>()
   for (const p of allowedPaths) {
-    if (p.split('/').pop()?.toLowerCase() === 'downloads') downloadsParents.add(p)
+    const leaf = p.split(/[\\/]/).pop()?.toLowerCase()
+    if (leaf === 'downloads') downloadsParents.add(p)
+    if (leaf === '.trash' || leaf === '$recycle.bin') trashParents.add(p)
   }
 
   scanning = true
@@ -311,15 +288,17 @@ export async function runBackgroundScan(): Promise<void> {
       const entries = await scanFolder(scanPath)
       for (const entry of entries) {
         const isDev = isDevDependencyEntry(entry)
-        const parentDir = entry.path.slice(0, entry.path.lastIndexOf('/'))
+        const lastSeparator = Math.max(entry.path.lastIndexOf('/'), entry.path.lastIndexOf('\\'))
+        const parentDir = lastSeparator === -1 ? '' : entry.path.slice(0, lastSeparator)
         const isDownloadsItem = downloadsParents.has(parentDir) && entry.sizeKB > 0
+        const isTrashItem = trashParents.has(parentDir) && entry.sizeKB > 0
 
-        if (!isDev && !isDownloadsItem) {
-          const inAllowedPath = allowedPrefixes.some(p => entry.path === p || entry.path.startsWith(`${p}/`))
+        if (!isDev && !isDownloadsItem && !isTrashItem) {
+          const inAllowedPath = allowedPrefixes.some(p => entry.path === p || entry.path.startsWith(`${p}${entry.path.includes('\\') ? '\\' : '/'}`))
           if (!inAllowedPath) continue
         }
 
-        if (isCleanableEntry(entry) || isDev || isDownloadsItem) {
+        if (isCleanableEntry(entry) || isDev || isDownloadsItem || isTrashItem) {
           allCleanable.push(entry)
         }
       }

@@ -1,7 +1,6 @@
 import { spawn } from 'node:child_process'
-import { accessSync, constants } from 'node:fs'
 import * as path from 'node:path'
-import { is } from '@electron-toolkit/utils'
+import { getAppPlatform, resolveScannerBinaryPath } from './platform'
 
 export interface DiskEntry {
   name: string
@@ -10,25 +9,8 @@ export interface DiskEntry {
   isDir: boolean
 }
 
-function getScannerBinaryPath(): string | null {
-  const candidates = [
-    is.dev
-      ? path.join(process.cwd(), 'resources', 'scanner-bin')
-      : path.join(process.resourcesPath, 'scanner-bin')
-  ]
-  for (const p of candidates) {
-    try {
-      accessSync(p, constants.X_OK)
-      return p
-    } catch {
-      // not found or not executable
-    }
-  }
-  return null
-}
-
-// Parse Swift binary output: "<sizeBytes>\t<d|f>\t<path>"
-function parseSwiftLine(line: string, rootPath: string): DiskEntry | null {
+// Parse native scanner output: "<sizeBytes>\t<d|f>\t<path>"
+function parseScannerLine(line: string, rootPath: string): DiskEntry | null {
   const t1 = line.indexOf('\t')
   if (t1 === -1) return null
   const t2 = line.indexOf('\t', t1 + 1)
@@ -69,7 +51,7 @@ function parseDuLine(line: string, rootPath: string): DiskEntry | null {
   }
 }
 
-function spawnSwift(
+function spawnNativeScanner(
   binary: string,
   dirPath: string,
   onEntry: (entry: DiskEntry) => void,
@@ -91,14 +73,14 @@ function spawnSwift(
     buffer = lines.pop() ?? ''
     for (const line of lines) {
       if (!line) continue
-      const entry = parseSwiftLine(line, dirPath)
+      const entry = parseScannerLine(line, dirPath)
       if (!cancelled && entry) onEntry(entry)
     }
   })
 
   proc.on('close', () => {
     if (buffer.trim()) {
-      const entry = parseSwiftLine(buffer.trim(), dirPath)
+      const entry = parseScannerLine(buffer.trim(), dirPath)
       if (!cancelled && entry) onEntry(entry)
     }
     if (!cancelled) onDone()
@@ -165,9 +147,13 @@ export function scanDirectoryStreaming(
   options?: { lowPriority?: boolean }
 ): () => void {
   const low = options?.lowPriority ?? false
-  const binary = getScannerBinaryPath()
+  const binary = resolveScannerBinaryPath()
   if (binary) {
-    return spawnSwift(binary, dirPath, onEntry, onDone, low)
+    return spawnNativeScanner(binary, dirPath, onEntry, onDone, low)
   }
-  return spawnDuFallback(dirPath, onEntry, onDone, low)
+  if (getAppPlatform() === 'macos') {
+    return spawnDuFallback(dirPath, onEntry, onDone, low)
+  }
+  queueMicrotask(() => onDone('Native scanner binary not found'))
+  return () => {}
 }
