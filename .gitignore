@@ -2,3 +2,5 @@ node_modules
 out
 dist
 *.local
+.DS_Store
+native/scanner-rs/target

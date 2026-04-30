@@ -1,5 +1,5 @@
 #!/bin/bash
-# Builds and publishes the macOS universal release locally, then pushes the
+# Builds and publishes all macOS release variants locally, then pushes the
 # version tag so GitHub Actions can build and publish the Windows installer.
 
 set -e
@@ -12,9 +12,7 @@ TAG="v${VERSION}"
 
 echo "▶ Building Nerion ${TAG} for macOS"
 
-npm run build:scanner:universal
-npm run build
-electron-builder --universal --publish always
+npm run release:all
 
 if git rev-parse "${TAG}" >/dev/null 2>&1; then
   echo "✗ Git tag ${TAG} already exists locally"
@@ -27,4 +25,5 @@ git push origin "${TAG}"
 
 echo ""
 echo "✓ macOS release ${TAG} published"
+echo "  arm64, x64, and universal macOS artifacts uploaded."
 echo "  Windows NSIS build will be produced by GitHub Actions on the tag push."
