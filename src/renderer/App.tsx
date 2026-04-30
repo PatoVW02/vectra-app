@@ -20,6 +20,7 @@ import { UpgradeModal } from './components/UpgradeModal'
 import { LicenseModal } from './components/LicenseModal'
 import { WhatsNewModal } from './components/WhatsNewModal'
 import { getDefaultQuickScanFolders, getQuickScanRootPath, resolveQuickFolderPath } from '../shared/policy'
+import { isAbsoluteUiPath, normalizeUiPath, pathBasename, pathParent } from './utils/path'
 
 interface ContextMenuState {
   entry: DiskEntry
@@ -90,7 +91,10 @@ function AppShell() {
 
   // Derived from homeDir — the ~/Library path used as quick scan root
   const QUICK_SCAN_PATH = useMemo(
-    () => getQuickScanRootPath(homeDir, platformInfo?.id ?? 'macos'),
+    () => {
+      const value = getQuickScanRootPath(homeDir, platformInfo?.id ?? 'macos')
+      return value ? normalizeUiPath(value) : null
+    },
     [homeDir, platformInfo]
   )
 
@@ -105,9 +109,9 @@ function AppShell() {
       const defaults = getDefaultQuickScanFolders(platform.id)
       setShowDevDeps(s.showDevDependencies ?? false)
       setDeleteImmediately(s.deleteImmediately ?? false)
-      setQuickScanFolders(s.quickScanFolders?.length ? s.quickScanFolders : defaults)
+      setQuickScanFolders((s.quickScanFolders?.length ? s.quickScanFolders : defaults).map((folder) => isAbsoluteUiPath(folder) || folder.includes('\\') ? normalizeUiPath(folder) : folder))
       setDeleteQuotaUsed(s.deleteQuota?.used ?? 0)
-      setHomeDir(home)
+      setHomeDir(normalizeUiPath(home))
       setPlatformInfo(platform)
     })
   }, [])
@@ -166,6 +170,7 @@ function AppShell() {
     const paths = quickScanFolders
       .map((folder) => resolveQuickFolderPath(folder, homeDir, platformInfo?.id ?? 'macos'))
       .filter((value): value is string => value !== null)
+      .map((value) => normalizeUiPath(value))
     return new Set(paths)
   }, [scanMode, quickScanFolders, QUICK_SCAN_PATH, homeDir, platformInfo])
 
@@ -176,12 +181,13 @@ function AppShell() {
     const paths = quickScanFolders
       .map((folder) => resolveQuickFolderPath(folder, homeDir, platformInfo?.id ?? 'macos'))
       .filter((value): value is string => value !== null)
+      .map((value) => normalizeUiPath(value))
     return paths.length > 0 ? paths : null
   }, [scanMode, quickScanFolders, QUICK_SCAN_PATH, homeDir, platformInfo])
 
   const deepScanPaths = useMemo(() => {
     if (scanMode !== 'deep' || !rootPath || !homeDir) return null
-    const trashPath = `${homeDir}/.Trash`
+    const trashPath = normalizeUiPath(`${homeDir}/.Trash`)
     const normalizedRoot = rootPath.replace(/\/+$/, '')
     if (trashPath === normalizedRoot || trashPath.startsWith(normalizedRoot + '/')) return null
     return [rootPath, trashPath]
@@ -210,26 +216,27 @@ function AppShell() {
     // At the quick scan root: Library subfolder entries + home-relative entries + custom absolute entries
     const libraryEntries = raw.filter(e => quickScanAllowedPaths.has(e.path))
     const homeEntries: DiskEntry[] = quickScanFolders
-      .filter(f => !f.startsWith('/') && homeDir)
+      .filter(f => !isAbsoluteUiPath(f) && homeDir)
       .map(f => {
         const resolvedPath = resolveQuickFolderPath(f, homeDir, platformInfo?.id ?? 'macos')
         if (!resolvedPath) return null
-        if (!quickScanAllowedPaths.has(resolvedPath)) return null
-        const children = tree.get(resolvedPath) ?? []
+        const normalizedResolvedPath = normalizeUiPath(resolvedPath)
+        if (!quickScanAllowedPaths.has(normalizedResolvedPath)) return null
+        const children = tree.get(normalizedResolvedPath) ?? []
         const totalKB = children.reduce((s, e) => s + e.sizeKB, 0)
-        return { name: f, path: resolvedPath, sizeKB: totalKB, isDir: true } as DiskEntry
+        return { name: f, path: normalizedResolvedPath, sizeKB: totalKB, isDir: true } as DiskEntry
       })
       .filter((e): e is DiskEntry => e !== null)
     const customEntries: DiskEntry[] = quickScanFolders
-      .filter(f =>
-        f.startsWith('/') &&
-        quickScanAllowedPaths.has(f) &&
-        (!QUICK_SCAN_PATH || !f.startsWith(QUICK_SCAN_PATH + '/') && !f.startsWith(QUICK_SCAN_PATH + '\\'))
-      )
+      .filter((f) => {
+        if (!isAbsoluteUiPath(f) || !quickScanAllowedPaths.has(f)) return false
+        if (!QUICK_SCAN_PATH) return true
+        return !(f === QUICK_SCAN_PATH || f.startsWith(QUICK_SCAN_PATH + '/'))
+      })
       .map(f => {
         const children = tree.get(f) ?? []
         const totalKB = children.reduce((s, e) => s + e.sizeKB, 0)
-        return { name: f.split('/').pop() ?? f, path: f, sizeKB: totalKB, isDir: true }
+        return { name: pathBasename(f), path: f, sizeKB: totalKB, isDir: true }
       })
     return filterDeleted([...libraryEntries, ...homeEntries, ...customEntries].sort((a, b) => b.sizeKB - a.sizeKB))
   }, [tree, currentPath, rootPath, quickScanAllowedPaths, quickScanFolders, QUICK_SCAN_PATH, homeDir, confirmedDeletedPaths, platformInfo])
@@ -244,19 +251,21 @@ function AppShell() {
     // Their direct children are all treated as cleanable — the whole point of scanning
     // Downloads is to clean it up.
     const downloadsParents = new Set<string>()
-    if (rootPath && rootPath.split('/').pop()?.toLowerCase() === 'downloads') {
+    if (rootPath && pathBasename(rootPath).toLowerCase() === 'downloads') {
       downloadsParents.add(rootPath)
     }
     if (quickScanAllowedPaths) {
       for (const p of quickScanAllowedPaths) {
-        if (p.split('/').pop()?.toLowerCase() === 'downloads') downloadsParents.add(p)
+        if (pathBasename(p).toLowerCase() === 'downloads') downloadsParents.add(p)
       }
     }
 
     // Direct children of the user's Trash should always be considered cleanable,
     // but never the Trash folder itself.
     const trashParents = new Set<string>()
-    if (homeDir) trashParents.add(`${homeDir}/.Trash`)
+    if (homeDir && (platformInfo?.id ?? 'macos') === 'macos') {
+      trashParents.add(normalizeUiPath(`${homeDir}/.Trash`))
+    }
 
     for (const entries of tree.values()) {
       for (const entry of entries) {
@@ -265,8 +274,7 @@ function AppShell() {
         const isDev = isDevDependency(entry)
 
         // Direct children of a targeted Downloads folder are always cleanable
-        const lastSeparator = Math.max(entry.path.lastIndexOf('/'), entry.path.lastIndexOf('\\'))
-        const parentDir = lastSeparator === -1 ? '' : entry.path.slice(0, lastSeparator)
+        const parentDir = pathParent(entry.path)
         const isDownloadsItem = downloadsParents.size > 0
           && downloadsParents.has(parentDir)
           && entry.sizeKB > 0
@@ -290,7 +298,7 @@ function AppShell() {
       }
     }
     return result
-  }, [tree, quickScanAllowedPaths, rootPath, homeDir])
+  }, [tree, quickScanAllowedPaths, rootPath, homeDir, platformInfo])
 
   const cleanableCount = allCleanable.size
 
@@ -359,7 +367,7 @@ function AppShell() {
   // ── Scan ──────────────────────────────────────────────────────────────────
 
   const handleScan = useCallback((pathOverride?: string) => {
-    const path = pathOverride ?? (scanMode === 'quick' && QUICK_SCAN_PATH ? QUICK_SCAN_PATH : selectedPath)
+    const path = normalizeUiPath(pathOverride ?? (scanMode === 'quick' && QUICK_SCAN_PATH ? QUICK_SCAN_PATH : selectedPath))
     resetTo(path)
     setRootPath(path)
     setScanTrigger(t => t + 1)
@@ -385,14 +393,15 @@ function AppShell() {
   const handleChooseFolder = useCallback(async () => {
     const picked = await window.electronAPI.openDirectory()
     if (!picked) return
-    setSelectedPath(picked)
+    const normalizedPicked = normalizeUiPath(picked)
+    setSelectedPath(normalizedPicked)
 
     // If a scan has already completed, clear the previous results and return to
     // the empty/welcome view until the user starts the next scan.
     if (scanPhase === 'active' && !scanning) {
       setScanPhase('arriving')
       setRootPath(null)
-      resetTo(picked)
+      resetTo(normalizedPicked)
       setSelectedPaths(new Map())
       setContextMenu(null)
       setInfoPanelEntry(null)
@@ -666,7 +675,7 @@ function AppShell() {
                   ) : (
                   <p className="text-xs text-zinc-600">
                     {quickScanFolders.length > 0
-                      ? quickScanFolders.map(f => f.startsWith('/') ? f.split('/').pop() : f).join(' · ')
+                      ? quickScanFolders.map(f => isAbsoluteUiPath(f) ? pathBasename(f) : f).join(' · ')
                       : 'No folders selected — configure in Settings'}
                   </p>
                   )}

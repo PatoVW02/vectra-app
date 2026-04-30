@@ -328,9 +328,11 @@ interface TreemapViewProps {
   onContinue: () => void
 }
 
+import { pathBasename } from '../utils/path'
+
 function folderDisplayName(path: string): string {
   if (!path || path === '/') return 'root'
-  return path.split('/').filter(Boolean).pop() ?? path
+  return pathBasename(path)
 }
 
 // Zoom is offered when the largest item is at least 8× the smallest,

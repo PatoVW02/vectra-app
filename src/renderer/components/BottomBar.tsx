@@ -1,3 +1,5 @@
+import { isAbsoluteUiPath, pathBasename } from '../utils/path'
+
 type ScanMode = 'quick' | 'deep'
 
 interface BottomBarProps {
@@ -34,7 +36,7 @@ export function BottomBar({
   const activeScanPath = scanningPath || selectedPath
   const activeScanFolder = activeScanPath === '/'
     ? 'root'
-    : (activeScanPath.split('/').filter(Boolean).pop() ?? activeScanPath)
+    : pathBasename(activeScanPath)
 
   return (
     <div className="shrink-0 border-t border-white/[0.08] px-4 py-3 flex flex-col items-center gap-1.5 bg-zinc-950/70 backdrop-blur-xl">
@@ -122,7 +124,7 @@ export function BottomBar({
           <span className="text-xs text-zinc-600 font-mono truncate block w-full text-center" title={selectedPath}>
             {scanMode === 'quick'
               ? (quickScanFolders.length > 0
-                  ? quickScanFolders.map(f => f.startsWith('/') ? f.split('/').pop() : f).join(' · ')
+                  ? quickScanFolders.map(f => isAbsoluteUiPath(f) ? pathBasename(f) : f).join(' · ')
                   : '~/Library')
               : (selectedPath === '/' ? 'root' : selectedPath)}
           </span>

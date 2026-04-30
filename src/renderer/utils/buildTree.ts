@@ -1,5 +1,6 @@
 import { DiskEntry } from '../types'
 import { isCleanable } from './cleanable'
+import { normalizeUiPath } from './path'
 
 export interface TreeNode {
   label: string        // compressed segment(s), e.g. "Desktop/project" or "node_modules"
@@ -24,14 +25,15 @@ export function buildCleanableTree(
   selectablePaths?: Set<string>
 ): TreeNode[] {
   // Normalize root: '' for '/', otherwise no trailing slash
-  const root = rootPath === '/' ? '' : rootPath.replace(/\/$/, '')
+  const normalizedRoot = normalizeUiPath(rootPath)
+  const root = normalizedRoot === '/' ? '' : normalizedRoot.replace(/\/$/, '')
 
   // Index all entries by path
   const byPath = new Map<string, DiskEntry>()
-  for (const e of entries) byPath.set(e.path, e)
+  for (const e of entries) byPath.set(normalizeUiPath(e.path), e)
 
   // Collect all cleanable paths
-  const cleanablePaths = entries.filter(isCleanable).map((e) => e.path)
+  const cleanablePaths = entries.filter(isCleanable).map((e) => normalizeUiPath(e.path))
   if (cleanablePaths.length === 0 && (!selectablePaths || selectablePaths.size === 0)) return []
 
   // Build a minimal trie: node = { children: Map<segment, node>, entry }
@@ -44,12 +46,13 @@ export function buildCleanableTree(
   const trieRoot: TrieNode = { children: new Map(), entry: undefined, path: root || '/' }
 
   for (const entry of entries) {
-    const underRoot = root !== '' && entry.path.startsWith(root + '/')
+    const entryPath = normalizeUiPath(entry.path)
+    const underRoot = root !== '' && entryPath.startsWith(root + '/')
     const rel = underRoot
-      ? entry.path.slice(root.length + 1)
-      : entry.path.startsWith('/')
-      ? entry.path.slice(1)   // absolute path outside root — build from filesystem root
-      : entry.path
+      ? entryPath.slice(root.length + 1)
+      : entryPath.startsWith('/')
+      ? entryPath.slice(1)   // absolute path outside root — build from filesystem root
+      : entryPath
     const segments = rel.split('/').filter(Boolean)
 
     let cur = trieRoot

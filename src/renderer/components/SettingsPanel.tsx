@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { NerionSettings, OllamaModel, LicenseInfo, PlatformInfo, UpdaterStatusEvent } from '../types'
 import { formatSize } from '../utils/format'
+import { normalizeUiPath } from '../utils/path'
 import { HeaderFrame } from './HeaderFrame'
 import { Sparkles } from 'lucide-react'
 
@@ -462,10 +463,11 @@ export function SettingsPanel({ onClose, onDevDepsChange, onDeleteModeChange, qu
     if (!settings) return
     const result = await window.electronAPI.openDirectory()
     if (!result) return
-    const alreadyKnown = (settings.customQuickScanFolders ?? []).includes(result)
-    const alreadyEnabled = quickScanFolders.includes(result)
-    const nextCustom = alreadyKnown ? (settings.customQuickScanFolders ?? []) : [...(settings.customQuickScanFolders ?? []), result]
-    const nextEnabled = alreadyEnabled ? quickScanFolders : [...quickScanFolders, result]
+    const normalizedResult = normalizeUiPath(result)
+    const alreadyKnown = (settings.customQuickScanFolders ?? []).includes(normalizedResult)
+    const alreadyEnabled = quickScanFolders.includes(normalizedResult)
+    const nextCustom = alreadyKnown ? (settings.customQuickScanFolders ?? []) : [...(settings.customQuickScanFolders ?? []), normalizedResult]
+    const nextEnabled = alreadyEnabled ? quickScanFolders : [...quickScanFolders, normalizedResult]
     onQuickScanFoldersChange(nextEnabled)
     await window.electronAPI.saveSettings({ ...settings, quickScanFolders: nextEnabled, customQuickScanFolders: nextCustom })
     setSettings(s => s ? { ...s, customQuickScanFolders: nextCustom } : s)

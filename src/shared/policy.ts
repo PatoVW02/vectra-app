@@ -50,7 +50,7 @@ function getMacQuickFolderPath(folder: string, homeDir: string): string {
 }
 
 function getWindowsQuickFolderPath(folder: string, homeDir: string): string {
-  if (/^[a-z]:\\/i.test(folder)) return folder
+  if (/^[a-z]:(\\|\/)/i.test(folder) || /^[a-z]:$/i.test(folder)) return folder
   switch (folder) {
     case 'Temp':
       return `${homeDir}\\AppData\\Local\\Temp`

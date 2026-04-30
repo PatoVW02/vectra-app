@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { DiskEntry } from '../types'
+import { normalizeUiPath, pathParent } from '../utils/path'
 
 export type TreeMap = Map<string, DiskEntry[]>
 
@@ -9,13 +10,6 @@ export interface TreeScanState {
   scannedCount: number
   removeEntries: (paths: string[]) => void
   cancelScan: () => void
-}
-
-function parentPath(p: string): string {
-  const trimmed = p.endsWith('/') ? p.slice(0, -1) : p
-  const lastSlash = trimmed.lastIndexOf('/')
-  if (lastSlash <= 0) return '/'
-  return trimmed.slice(0, lastSlash)
 }
 
 // Insert into a sorted-descending array without copying it
@@ -126,13 +120,17 @@ export function useTreeScanner(rootPath: string | null, scanTrigger: number, sca
     }
 
     window.electronAPI.onScanEntry((entry) => {
-      const parent = parentPath(entry.path)
+      const normalizedEntry: DiskEntry = {
+        ...entry,
+        path: normalizeUiPath(entry.path),
+      }
+      const parent = pathParent(normalizedEntry.path)
       let siblings = internalTree.current.get(parent)
       if (!siblings) {
         siblings = []
         internalTree.current.set(parent, siblings)
       }
-      insertSorted(siblings, entry)
+      insertSorted(siblings, normalizedEntry)
       pendingCount.current++
       scheduleBatch()
     })

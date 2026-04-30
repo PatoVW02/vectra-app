@@ -5,6 +5,7 @@ import { isAppleMetadata, isCleanable, isDevDependency } from '../utils/cleanabl
 import { formatSize } from '../utils/format'
 import { buildCleanableTree, TreeNode } from '../utils/buildTree'
 import { isCriticalPath, isContentOnlyProtectedRoot } from '../utils/criticalPaths'
+import { pathParent } from '../utils/path'
 
 interface SmartCleanPanelProps {
   allCleanable: Map<string, DiskEntry>
@@ -621,7 +622,7 @@ export function SmartCleanPanel({
     for (const e of systemEntries) {
       // Skip Downloads items — age-based logic handles them below
       if (downloadsRoot) {
-        const parent = e.path.substring(0, e.path.lastIndexOf('/'))
+        const parent = pathParent(e.path)
         if (parent === downloadsRoot) continue
       }
       initial.add(e.path)
@@ -642,7 +643,7 @@ export function SmartCleanPanel({
 
     const downloadsRoot = `${homeDir}/Downloads`
     const downloadItems = systemEntries.filter((e) => {
-      const parent = e.path.substring(0, e.path.lastIndexOf('/'))
+      const parent = pathParent(e.path)
       return parent === downloadsRoot
     })
     if (downloadItems.length === 0) return
