@@ -23,7 +23,8 @@ function createWindow(): void {
   // Hide to tray instead of closing when background scan is enabled,
   // but let the close through when the user explicitly chose Quit.
   mainWindow.on('close', (e) => {
-    if (!isQuitting() && loadSettings().backgroundScan.enabled) {
+    const settings = loadSettings()
+    if (!isQuitting() && (settings.backgroundScan.enabled || settings.showMenuBarIcon)) {
       e.preventDefault()
       mainWindow?.hide()
       hideDock()
@@ -93,4 +94,3 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   if (!shouldKeepAppAliveOnWindowClose()) app.quit()
 })
-

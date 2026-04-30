@@ -37,7 +37,6 @@ function detectBuildArch(): 'universal' | 'arm64' | 'x64' {
 
 function getUpdateChannel(): string | null {
   if (process.platform === 'darwin') return detectBuildArch()
-  if (process.platform === 'win32') return process.arch === 'arm64' ? 'arm64' : 'x64'
   return null
 }
 

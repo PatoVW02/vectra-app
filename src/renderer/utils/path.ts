@@ -2,12 +2,13 @@ export function normalizeUiPath(input: string): string {
   if (!input) return input
 
   const slashified = input.replace(/\\/g, '/')
+  const casefolded = /^[A-Za-z]:/.test(slashified) ? slashified.toLowerCase() : slashified
 
-  if (/^[A-Za-z]:\/?$/.test(slashified)) {
-    return slashified.endsWith('/') ? slashified : `${slashified}/`
+  if (/^[a-z]:\/?$/.test(casefolded)) {
+    return casefolded.endsWith('/') ? casefolded : `${casefolded}/`
   }
 
-  const collapsed = slashified.replace(/\/{2,}/g, '/')
+  const collapsed = casefolded.replace(/\/{2,}/g, '/')
   if (collapsed === '/') return collapsed
 
   return collapsed.endsWith('/') ? collapsed.slice(0, -1) : collapsed

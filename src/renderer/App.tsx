@@ -195,11 +195,12 @@ function AppShell() {
 
   const deepScanPaths = useMemo(() => {
     if (scanMode !== 'deep' || !rootPath || !homeDir) return null
+    if ((platformInfo?.id ?? 'macos') === 'windows') return [rootPath]
     const trashPath = normalizeUiPath(`${homeDir}/.Trash`)
     const normalizedRoot = rootPath.replace(/\/+$/, '')
     if (trashPath === normalizedRoot || trashPath.startsWith(normalizedRoot + '/')) return null
     return [rootPath, trashPath]
-  }, [scanMode, rootPath, homeDir])
+  }, [scanMode, rootPath, homeDir, platformInfo])
 
   const { tree, scanning, scannedCount, removeEntries, cancelScan } = useTreeScanner(
     rootPath,

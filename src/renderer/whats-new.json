@@ -1,6 +1,28 @@
 {
   "releases": [
     {
+      "version": "1.4.3",
+      "date": "April 2026",
+      "description": "This update fixes several important Windows issues in scanning, updates, and tray behavior.",
+      "items": [
+        {
+          "icon": "Folder",
+          "title": "Windows Scan Fixes",
+          "description": "Quick Scan and Deep Scan now build Windows folder trees more reliably instead of showing empty results right after scanning."
+        },
+        {
+          "icon": "Download",
+          "title": "Windows Updater Fix",
+          "description": "The updater now looks for the correct Windows release metadata, so checking for updates should work properly on Windows."
+        },
+        {
+          "icon": "Monitor",
+          "title": "Tray Close Behavior",
+          "description": "Closing the app window on Windows now keeps Nerion running in the system tray when tray mode is enabled."
+        }
+      ]
+    },
+    {
       "version": "1.4.2",
       "date": "April 2026",
       "description": "This update improves the new Windows experience and makes app updates much smoother.",
