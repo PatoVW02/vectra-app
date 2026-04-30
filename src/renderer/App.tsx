@@ -34,6 +34,20 @@ interface UpdateToastState {
   downloaded: boolean
 }
 
+function getTreeEntries(tree: Map<string, DiskEntry[]>, targetPath: string | null): DiskEntry[] {
+  if (!targetPath) return []
+
+  const direct = tree.get(targetPath)
+  if (direct) return direct
+
+  const normalizedTarget = normalizeUiPath(targetPath)
+  for (const [key, entries] of tree) {
+    if (normalizeUiPath(key) === normalizedTarget) return entries
+  }
+
+  return []
+}
+
 /** Mounts children and immediately plays a slide-up-from-bottom entrance. */
 function SlideUpBar({ children }: { children: ReactNode }) {
   const [entered, setEntered] = useState(false)
@@ -218,7 +232,7 @@ function AppShell() {
   // At the root level of a quick scan only show the configured subfolders; deep
   // into the tree (or in deep mode) show everything as normal.
   const currentEntries = useMemo(() => {
-    const raw = (currentPath ? tree.get(currentPath) : undefined) ?? []
+    const raw = getTreeEntries(tree, currentPath)
     const filterDeleted = (entries: DiskEntry[]) =>
       confirmedDeletedPaths.size === 0 ? entries : entries.filter(e => !confirmedDeletedPaths.has(e.path))
     if (!quickScanAllowedPaths || currentPath !== rootPath) return filterDeleted(raw)
@@ -231,7 +245,7 @@ function AppShell() {
         if (!resolvedPath) return null
         const normalizedResolvedPath = normalizeUiPath(resolvedPath)
         if (!quickScanAllowedPaths.has(normalizedResolvedPath)) return null
-        const children = tree.get(normalizedResolvedPath) ?? []
+        const children = getTreeEntries(tree, normalizedResolvedPath)
         const totalKB = children.reduce((s, e) => s + e.sizeKB, 0)
         return { name: f, path: normalizedResolvedPath, sizeKB: totalKB, isDir: true } as DiskEntry
       })
@@ -243,7 +257,7 @@ function AppShell() {
         return !(f === QUICK_SCAN_PATH || f.startsWith(QUICK_SCAN_PATH + '/'))
       })
       .map(f => {
-        const children = tree.get(f) ?? []
+        const children = getTreeEntries(tree, f)
         const totalKB = children.reduce((s, e) => s + e.sizeKB, 0)
         return { name: pathBasename(f), path: f, sizeKB: totalKB, isDir: true }
       })

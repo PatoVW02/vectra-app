@@ -18,7 +18,7 @@ function parseScannerLine(line: string, rootPath: string): DiskEntry | null {
 
   const sizeBytes = parseInt(line.slice(0, t1), 10)
   const isDir = line[t1 + 1] === 'd'
-  const fullPath = line.slice(t2 + 1)
+  const fullPath = line.slice(t2 + 1).replace(/\r$/, '')
 
   if (!fullPath || isNaN(sizeBytes)) return null
   // Skip the root itself
