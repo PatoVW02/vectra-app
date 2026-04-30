@@ -1,6 +1,23 @@
 {
   "releases": [
     {
+      "version": "1.4.4",
+      "date": "April 2026",
+      "description": "This update focuses on fixing the remaining Windows scan issue.",
+      "items": [
+        {
+          "icon": "Folder",
+          "title": "Empty Folder Fix",
+          "description": "Windows scans now match folder paths more reliably, fixing cases where Quick Scan or Deep Scan could incorrectly show an empty folder screen."
+        },
+        {
+          "icon": "Zap",
+          "title": "Scanner Parsing Cleanup",
+          "description": "We also tightened the native scan parsing path so Windows results are handled more consistently from the scanner to the UI."
+        }
+      ]
+    },
+    {
       "version": "1.4.3",
       "date": "April 2026",
       "description": "This update fixes several important Windows issues in scanning, updates, and tray behavior.",
