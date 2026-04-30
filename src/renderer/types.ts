@@ -40,6 +40,7 @@ export interface NerionSettings {
   backgroundScan: BackgroundScanSettings
   showMenuBarIcon: boolean
   autoUpdateEnabled: boolean
+  lastAutoUpdateCheckTime: number | null
   deleteImmediately: boolean
   quickScanTrashConfigured: boolean
   preferredOllamaModel: string | null
@@ -147,8 +148,11 @@ declare global {
       testNotification: () => Promise<void>
       checkForUpdates: () => Promise<boolean>
       installUpdateNow: () => Promise<boolean>
-      onUpdaterStatus: (cb: (event: UpdaterStatusEvent) => void) => void
+      isUpdateReadyToInstall: () => Promise<boolean>
+      onUpdaterStatus: (cb: (event: UpdaterStatusEvent) => void) => () => void
       removeUpdaterListeners: () => void
+      onOpenSettingsTab: (cb: (tab: 'general' | 'background' | 'ai' | 'scanning') => void) => () => void
+      removeOpenSettingsTabListeners: () => void
       requestNotificationPermission: () => Promise<void>
       checkNotificationPermission: () => Promise<boolean | null>
       markOnboardingComplete: () => Promise<void>

@@ -17,6 +17,7 @@ export interface NerionSettings {
   backgroundScan: BackgroundScanSettings
   showMenuBarIcon: boolean
   autoUpdateEnabled: boolean
+  lastAutoUpdateCheckTime: number | null
   deleteImmediately: boolean
   quickScanTrashConfigured: boolean
   preferredOllamaModel: string | null
@@ -57,6 +58,7 @@ function buildDefaults(): NerionSettings {
   },
   showMenuBarIcon: true,
   autoUpdateEnabled: true,
+  lastAutoUpdateCheckTime: null,
   deleteImmediately: false,
   quickScanTrashConfigured: false,
   preferredOllamaModel: null,

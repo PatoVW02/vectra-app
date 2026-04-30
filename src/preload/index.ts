@@ -10,14 +10,20 @@ const ollamaCallbacks: {
   done:  ((error: string | null) => void) | null
 } = { model: null, token: null, done: null }
 
-const updaterCallbacks: {
-  status: ((event: UpdaterStatusEvent) => void) | null
-} = { status: null }
+const updaterStatusCallbacks = new Set<(event: UpdaterStatusEvent) => void>()
+const openSettingsTabCallbacks = new Set<(tab: 'general' | 'background' | 'ai' | 'scanning') => void>()
 
 ipcRenderer.on('ollama-model', (_e, model)  => ollamaCallbacks.model?.(model))
 ipcRenderer.on('ollama-token', (_e, token)  => ollamaCallbacks.token?.(token))
 ipcRenderer.on('ollama-done',  (_e, error)  => ollamaCallbacks.done?.(error))
-ipcRenderer.on('updater-status', (_e, event) => updaterCallbacks.status?.(event as UpdaterStatusEvent))
+ipcRenderer.on('updater-status', (_e, event) => {
+  const payload = event as UpdaterStatusEvent
+  updaterStatusCallbacks.forEach((cb) => cb(payload))
+})
+ipcRenderer.on('open-settings-tab', (_e, tab) => {
+  const payload = tab as 'general' | 'background' | 'ai' | 'scanning'
+  openSettingsTabCallbacks.forEach((cb) => cb(payload))
+})
 
 contextBridge.exposeInMainWorld('electronAPI', {
   // ── Scanner ──────────────────────────────────────────────────────────────
@@ -86,8 +92,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   testNotification: () => ipcRenderer.invoke('test-notification'),
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
   installUpdateNow: () => ipcRenderer.invoke('install-update-now') as Promise<boolean>,
-  onUpdaterStatus: (cb: (event: UpdaterStatusEvent) => void) => { updaterCallbacks.status = cb },
-  removeUpdaterListeners: () => { updaterCallbacks.status = null },
+  isUpdateReadyToInstall: () => ipcRenderer.invoke('is-update-ready-to-install') as Promise<boolean>,
+  onUpdaterStatus: (cb: (event: UpdaterStatusEvent) => void) => {
+    updaterStatusCallbacks.add(cb)
+    return () => updaterStatusCallbacks.delete(cb)
+  },
+  removeUpdaterListeners: () => { updaterStatusCallbacks.clear() },
+  onOpenSettingsTab: (cb: (tab: 'general' | 'background' | 'ai' | 'scanning') => void) => {
+    openSettingsTabCallbacks.add(cb)
+    return () => openSettingsTabCallbacks.delete(cb)
+  },
+  removeOpenSettingsTabListeners: () => { openSettingsTabCallbacks.clear() },
   requestNotificationPermission: () => ipcRenderer.invoke('request-notification-permission'),
   markOnboardingComplete: () => ipcRenderer.invoke('mark-onboarding-complete'),
   getLoginItem: () => ipcRenderer.invoke('get-login-item') as Promise<boolean>,

@@ -14,6 +14,7 @@ import { isAppleMetadata, isCleanable, isDevDependency } from './utils/cleanable
 import { isCriticalPath, isContentOnlyProtectedRoot } from './utils/criticalPaths'
 import { DiskEntry, PlatformInfo } from './types'
 import { SettingsPanel } from './components/SettingsPanel'
+import type { SettingsTab } from './components/SettingsPanel'
 import { OnboardingFlow } from './components/OnboardingFlow'
 import { useLicense } from './hooks/useLicense'
 import { UpgradeModal } from './components/UpgradeModal'
@@ -26,6 +27,11 @@ interface ContextMenuState {
   entry: DiskEntry
   x: number
   y: number
+}
+
+interface UpdateToastState {
+  version: string
+  downloaded: boolean
 }
 
 /** Mounts children and immediately plays a slide-up-from-bottom entrance. */
@@ -143,6 +149,8 @@ function AppShell() {
   const [reviewOpen, setReviewOpen] = useState(false)
   const [confirmedDeletedPaths, setConfirmedDeletedPaths] = useState<Set<string>>(new Set())
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [settingsRequestedTab, setSettingsRequestedTab] = useState<SettingsTab | null>(null)
+  const [updateToast, setUpdateToast] = useState<UpdateToastState | null>(null)
 
   // Smart Clean session state — reset on every new scan
   const prevScanning = useRef(false)
@@ -556,11 +564,43 @@ function AppShell() {
     const handler = (e: KeyboardEvent) => {
       if (e.metaKey && e.key === ',') {
         e.preventDefault()
+        setSettingsRequestedTab('general')
         setSettingsOpen(true)
       }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
+  }, [])
+
+  useEffect(() => {
+    const unsubscribe = window.electronAPI.onOpenSettingsTab((tab) => {
+      setSettingsRequestedTab(tab)
+      setSettingsOpen(true)
+    })
+    return () => unsubscribe()
+  }, [])
+
+  useEffect(() => {
+    const unsubscribe = window.electronAPI.onUpdaterStatus((event) => {
+      if (event.type === 'update-available') {
+        setUpdateToast({ version: event.version, downloaded: false })
+        return
+      }
+      if (event.type === 'update-downloaded') {
+        setUpdateToast({ version: event.version, downloaded: true })
+        return
+      }
+      if (event.type === 'update-not-available' || event.type === 'error') {
+        setUpdateToast((current) => (current?.downloaded ? current : null))
+      }
+    })
+    return () => unsubscribe()
+  }, [])
+
+  const handleOpenUpdateSettings = useCallback(() => {
+    setUpdateToast(null)
+    setSettingsRequestedTab('general')
+    setSettingsOpen(true)
   }, [])
 
   // Handle "Clean X GB" clicked from tray menu or notification
@@ -591,7 +631,10 @@ function AppShell() {
 
   return (
     <div className="flex flex-col h-screen bg-zinc-950 text-zinc-100 select-none overflow-hidden">
-      <Toolbar onSettingsOpen={() => setSettingsOpen(true)} />
+      <Toolbar onSettingsOpen={() => {
+        setSettingsRequestedTab(null)
+        setSettingsOpen(true)
+      }} />
 
       {scanPhase === 'active' && stack.length > 0 && (
         <div className="border-b border-white/5">
@@ -835,9 +878,58 @@ function AppShell() {
         />
       )}
 
+      {updateToast && (
+        <div className="fixed top-4 right-4 z-[100] max-w-sm">
+          <button
+            onClick={handleOpenUpdateSettings}
+            className="w-full rounded-xl border border-blue-500/30 bg-zinc-950/95 px-4 py-3 text-left shadow-2xl shadow-black/30 backdrop-blur-xl transition-colors hover:border-blue-400/50 hover:bg-zinc-900"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-zinc-100">
+                  {updateToast.downloaded ? 'Update ready to install' : 'Update available'}
+                </p>
+                <p className="mt-1 text-xs leading-relaxed text-zinc-400">
+                  {updateToast.downloaded
+                    ? `Nerion ${updateToast.version} has been downloaded. Open Settings to restart and install it.`
+                    : `Nerion ${updateToast.version} is downloading now. Open Settings to view the update progress.`}
+                </p>
+              </div>
+              <div className="flex items-start gap-3 shrink-0">
+                <span className="text-[11px] text-blue-400">
+                  Open
+                </span>
+                <span
+                  role="button"
+                  tabIndex={0}
+                  aria-label="Dismiss update toast"
+                  onClick={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    setUpdateToast(null)
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key !== 'Enter' && event.key !== ' ') return
+                    event.preventDefault()
+                    event.stopPropagation()
+                    setUpdateToast(null)
+                  }}
+                  className="text-zinc-500 transition-colors hover:text-zinc-300"
+                >
+                  ×
+                </span>
+              </div>
+            </div>
+          </button>
+        </div>
+      )}
+
       {settingsOpen && (
         <SettingsPanel
-          onClose={() => setSettingsOpen(false)}
+          onClose={() => {
+            setSettingsOpen(false)
+            setSettingsRequestedTab(null)
+          }}
           onDevDepsChange={setShowDevDeps}
           onDeleteModeChange={setDeleteImmediately}
           quickScanFolders={quickScanFolders}
@@ -848,6 +940,7 @@ function AppShell() {
           onUpgrade={() => setUpgradeOpen(true)}
           onLicense={() => setLicenseOpen(true)}
           onWhatsNew={() => setWhatsNewOpen(true)}
+          activeTabOverride={settingsRequestedTab}
         />
       )}
 

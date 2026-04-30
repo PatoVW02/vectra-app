@@ -1,7 +1,7 @@
 import { openSync, readSync, closeSync } from 'fs'
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, Notification } from 'electron'
 import { autoUpdater } from 'electron-updater'
-import { loadSettings } from './settings'
+import { loadSettings, patchSettings } from './settings'
 import { setQuitting } from './background'
 
 /**
@@ -44,6 +44,36 @@ function getUpdateChannel(): string | null {
 let listenersRegistered = false
 let checkInFlight = false
 let downloadedUpdateReady = false
+let autoUpdateSchedule: ReturnType<typeof setInterval> | null = null
+const AUTO_UPDATE_INTERVAL_MS = 24 * 60 * 60 * 1000
+const AUTO_UPDATE_POLL_MS = 60 * 60 * 1000
+
+function showMainWindowForUpdate(): void {
+  const win = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed())
+  if (!win) return
+  if (win.isMinimized()) win.restore()
+  win.show()
+  win.focus()
+  win.webContents.send('open-settings-tab', 'general')
+}
+
+function showUpdateReadyNotification(version: string): void {
+  if (!Notification.isSupported()) return
+
+  const note = new Notification({
+    title: 'Nerion update ready',
+    body: `Version ${version} has been downloaded. Click to open Settings and restart to install.`,
+  })
+  note.on('click', () => showMainWindowForUpdate())
+  note.show()
+}
+
+function shouldRunAutomaticCheck(): boolean {
+  const settings = loadSettings()
+  if (!settings.autoUpdateEnabled) return false
+  if (!settings.lastAutoUpdateCheckTime) return true
+  return Date.now() - settings.lastAutoUpdateCheckTime >= AUTO_UPDATE_INTERVAL_MS
+}
 
 export type UpdaterStatusEvent =
   | { type: 'checking' }
@@ -109,7 +139,8 @@ function ensureUpdaterListeners(): void {
   autoUpdater.on('update-downloaded', (info) => {
     downloadedUpdateReady = true
     broadcastUpdaterStatus({ type: 'update-downloaded', version: info.version })
-    console.log(`[Nerion] Update downloaded: ${info.version}. Will install on app quit.`)
+    console.log(`[Nerion] Update downloaded: ${info.version}.`)
+    showUpdateReadyNotification(info.version)
   })
 
   listenersRegistered = true
@@ -122,16 +153,20 @@ export async function runAutoUpdateCheck(reason: 'startup' | 'settings-enabled' 
   const settings = loadSettings()
   if (reason !== 'manual' && !settings.autoUpdateEnabled) return false
   if (checkInFlight) return false
+  if (reason !== 'manual' && reason !== 'settings-enabled' && !shouldRunAutomaticCheck()) return false
 
   checkInFlight = true
   try {
+    if (reason !== 'manual') {
+      patchSettings({ lastAutoUpdateCheckTime: Date.now() })
+    }
     broadcastUpdaterStatus({ type: 'checking' })
     const currentVersion = app.getVersion()
 
     ensureUpdaterListeners()
 
     autoUpdater.autoDownload = true
-    autoUpdater.autoInstallOnAppQuit = true
+    autoUpdater.autoInstallOnAppQuit = false
     const channel = getUpdateChannel()
     if (channel) autoUpdater.channel = channel
     downloadedUpdateReady = false
@@ -164,9 +199,13 @@ export function installDownloadedUpdateNow(): boolean {
   return true
 }
 
+export function isUpdateReadyToInstall(): boolean {
+  return downloadedUpdateReady
+}
+
 export function scheduleAutoUpdateChecks(): void {
-  // Lightweight periodic check to keep long-running sessions up to date.
-  setInterval(() => {
+  if (autoUpdateSchedule) clearInterval(autoUpdateSchedule)
+  autoUpdateSchedule = setInterval(() => {
     runAutoUpdateCheck('scheduled').catch(() => {})
-  }, 6 * 60 * 60 * 1000)
+  }, AUTO_UPDATE_POLL_MS)
 }

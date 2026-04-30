@@ -3,17 +3,17 @@
     {
       "version": "1.4.2",
       "date": "April 2026",
-      "description": "This update adds Windows support.",
+      "description": "This update improves the new Windows experience and makes app updates much smoother.",
       "items": [
         {
-          "icon": "Shield",
-          "title": "Windows Support",
-          "description": "Nerion is now available on Windows, bringing all the powerful features you love on macOS to your Windows PC."
+          "icon": "Zap",
+          "title": "Windows Scan Fixes",
+          "description": "Quick Scan now correctly builds and displays Windows folders instead of showing empty results right after scanning."
         },
         {
-          "icon": "Zap",
-          "title": "Bug Fixes & Polish",
-          "description": "We've squashed some bugs and made various small improvements to make your experience smoother and more enjoyable."
+          "icon": "Sparkles",
+          "title": "Smarter App Updates",
+          "description": "Nerion now checks for updates automatically, downloads them in the background, and guides you straight to the restart button when an update is ready."
         }
       ]
     },

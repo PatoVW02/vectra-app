@@ -8,7 +8,7 @@ import { scanDirectoryStreaming } from './scanner'
 import { loadSettings, saveSettings, patchSettings, NerionSettings } from './settings'
 import { rebuildTrayMenu, scheduleBackgroundScan, stopBackgroundScan, runBackgroundScan, updateLastScanPath, setTrayVisibility, testNotification } from './background'
 import { getLicenseInfo, activateLicense, revalidateLicense, deactivateLicense } from './license'
-import { runAutoUpdateCheck, installDownloadedUpdateNow } from './updater'
+import { runAutoUpdateCheck, installDownloadedUpdateNow, isUpdateReadyToInstall } from './updater'
 import { getPlatformMeta, revealInFileManager, supportsFullDiskAccess } from './platform'
 import {
   getDefaultQuickScanFolders,
@@ -1316,6 +1316,7 @@ What is this item and is it safe to delete?`
       lastManualScanFoundKB: prev.lastManualScanFoundKB,
       lastCleanedTime: prev.lastCleanedTime,
       lastCleanedKB: prev.lastCleanedKB,
+      lastAutoUpdateCheckTime: prev.lastAutoUpdateCheckTime,
       deleteQuota: prev.deleteQuota,
     }
     saveSettings(mergedSettings)
@@ -1341,6 +1342,10 @@ What is this item and is it safe to delete?`
 
   ipcMain.handle('install-update-now', () => {
     return installDownloadedUpdateNow()
+  })
+
+  ipcMain.handle('is-update-ready-to-install', () => {
+    return isUpdateReadyToInstall()
   })
 
   ipcMain.handle('request-notification-permission', () => {

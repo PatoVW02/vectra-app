@@ -18,6 +18,7 @@ interface SettingsPanelProps {
   onUpgrade: () => void
   onLicense: () => void
   onWhatsNew: () => void
+  activeTabOverride?: SettingsTab | null
 }
 
 function PremiumLock({ onUpgrade }: { onUpgrade: () => void }) {
@@ -69,7 +70,7 @@ const RECOMMENDED_MODELS = [
 ]
 
 type OllamaStatus = 'idle' | 'checking' | 'not-installed' | 'installed'
-type SettingsTab = 'general' | 'background' | 'ai' | 'scanning'
+export type SettingsTab = 'general' | 'background' | 'ai' | 'scanning'
 
 const SETTINGS_TABS: Array<{ id: SettingsTab; label: string; premium?: boolean }> = [
   { id: 'general', label: 'General' },
@@ -148,7 +149,7 @@ function Toggle({ on, onClick, disabled }: { on: boolean; onClick: () => void; d
   )
 }
 
-export function SettingsPanel({ onClose, onDevDepsChange, onDeleteModeChange, quickScanFolders, onQuickScanFoldersChange, platformInfo, isPremium, license, onUpgrade, onLicense, onWhatsNew }: SettingsPanelProps) {
+export function SettingsPanel({ onClose, onDevDepsChange, onDeleteModeChange, quickScanFolders, onQuickScanFoldersChange, platformInfo, isPremium, license, onUpgrade, onLicense, onWhatsNew, activeTabOverride = null }: SettingsPanelProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>('general')
   const [settings, setSettings] = useState<NerionSettings | null>(null)
   const [saving, setSaving] = useState(false)
@@ -182,6 +183,10 @@ export function SettingsPanel({ onClose, onDevDepsChange, onDeleteModeChange, qu
   const [pullError, setPullError] = useState<string | null>(null)
   const quickFolderOptions = platformInfo?.quickScanOptions ?? []
 
+  useEffect(() => {
+    if (activeTabOverride) setActiveTab(activeTabOverride)
+  }, [activeTabOverride])
+
   // Keep a ref so pull-done callback can access latest settings without stale closure
   const settingsRef = useRef<NerionSettings | null>(null)
   settingsRef.current = settings
@@ -190,6 +195,7 @@ export function SettingsPanel({ onClose, onDevDepsChange, onDeleteModeChange, qu
     window.electronAPI.getSettings().then(setSettings).catch(() => {})
     window.electronAPI.getLoginItem().then(setLoginItem).catch(() => {})
     window.electronAPI.getAiMode().then(setAiMode).catch(() => {})
+    window.electronAPI.isUpdateReadyToInstall().then(setUpdateReadyToInstall).catch(() => {})
     if (window.electronAPI.getAppVersion) {
       window.electronAPI.getAppVersion().then(setAppVersion).catch(() => {})
     }
@@ -312,8 +318,8 @@ export function SettingsPanel({ onClose, onDevDepsChange, onDeleteModeChange, qu
       }
     }
 
-    window.electronAPI.onUpdaterStatus(handleUpdaterStatus)
-    return () => window.electronAPI.removeUpdaterListeners()
+    const unsubscribe = window.electronAPI.onUpdaterStatus(handleUpdaterStatus)
+    return () => unsubscribe()
   }, [])
 
   // Check Ollama whenever AI is toggled on or when switching to Ollama mode
