@@ -871,12 +871,18 @@ export function registerIpcHandlers(): void {
       const cancellers: Array<() => void> = []
       let completed = 0
       let doneSent = false
+      let successfulRoots = 0
+      const errors: string[] = []
 
       const onDone = (error?: string) => {
         completed++
-        if (!doneSent && (error || completed === paths.length)) {
+        if (!error) successfulRoots++
+        else errors.push(error)
+
+        if (!doneSent && completed === paths.length) {
           doneSent = true
-          send('scan-done', error ?? null)
+          if (successfulRoots > 0) send('scan-done', null)
+          else send('scan-done', errors[0] ?? 'Could not read any of the selected folders')
         }
       }
 

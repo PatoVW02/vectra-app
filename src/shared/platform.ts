@@ -76,7 +76,7 @@ const PLATFORM_INFO: Record<AppPlatform, PlatformInfo> = {
     fullDiskAccessDescription: 'Windows does not require a separate Full Disk Access permission for standard scans.',
     notificationSettingsUrl: 'ms-settings:notifications',
     fullDiskAccessSettingsUrl: null,
-    quickScanDefaults: ['Temp', 'Logs', 'Downloads', 'Desktop', 'Recycle Bin'],
+    quickScanDefaults: ['Temp', 'Logs', 'Downloads', 'Desktop'],
     quickScanOptions: WINDOWS_QUICK_SCAN_OPTIONS,
   },
 }
@@ -104,4 +104,3 @@ export function detectRuntimePlatform(): AppPlatform {
 export function getPlatformInfo(platform: AppPlatform = detectRuntimePlatform()): PlatformInfo {
   return PLATFORM_INFO[platform]
 }
-
