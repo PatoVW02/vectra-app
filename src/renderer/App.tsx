@@ -216,7 +216,7 @@ function AppShell() {
     return [rootPath, trashPath]
   }, [scanMode, rootPath, homeDir, platformInfo])
 
-  const { tree, scanning, scannedCount, removeEntries, cancelScan } = useTreeScanner(
+  const { tree, scanning, scannedCount, error, removeEntries, cancelScan } = useTreeScanner(
     rootPath,
     scanTrigger,
     scanMode === 'quick' ? quickScanPaths : deepScanPaths
@@ -666,7 +666,7 @@ function AppShell() {
               scanning={scanning}
               scannedCount={scannedCount}
               scanningPath={rootPath ?? undefined}
-              error={null}
+              error={error}
               selectedPaths={selectedPathsSet}
               onNavigate={handleNavigate}
               onContextMenu={handleContextMenu}

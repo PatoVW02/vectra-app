@@ -1,6 +1,23 @@
 {
   "releases": [
     {
+      "version": "1.4.5",
+      "date": "May 2026",
+      "description": "This update improves Windows scanning and makes scan failures much easier to understand.",
+      "items": [
+        {
+          "icon": "Folder",
+          "title": "Windows Scan Reliability",
+          "description": "Nerion now passes Windows scan paths in a safer format and handles Windows folder reads more reliably."
+        },
+        {
+          "icon": "AlertTriangle",
+          "title": "Clearer Scan Errors",
+          "description": "If a Windows scan fails, Nerion now shows a real scan error instead of falling back to a misleading empty folder screen."
+        }
+      ]
+    },
+    {
       "version": "1.4.4",
       "date": "April 2026",
       "description": "This update focuses on fixing the remaining Windows scan issue.",

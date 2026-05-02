@@ -8,6 +8,7 @@ export interface TreeScanState {
   tree: TreeMap
   scanning: boolean
   scannedCount: number
+  error: string | null
   removeEntries: (paths: string[]) => void
   cancelScan: () => void
 }
@@ -35,7 +36,8 @@ export function useTreeScanner(rootPath: string | null, scanTrigger: number, sca
   const [state, setState] = useState<Omit<TreeScanState, 'removeEntries'>>({
     tree: new Map(),
     scanning: false,
-    scannedCount: 0
+    scannedCount: 0,
+    error: null,
   })
 
   const removeEntries = useCallback((paths: string[]) => {
@@ -85,7 +87,7 @@ export function useTreeScanner(rootPath: string | null, scanTrigger: number, sca
 
   useEffect(() => {
     if (!rootPath) {
-      setState({ tree: new Map(), scanning: false, scannedCount: 0 })
+      setState({ tree: new Map(), scanning: false, scannedCount: 0, error: null })
       return
     }
 
@@ -95,10 +97,10 @@ export function useTreeScanner(rootPath: string | null, scanTrigger: number, sca
     if (batchTimer.current) clearTimeout(batchTimer.current)
     batchTimer.current = null
 
-    setState({ tree: new Map(), scanning: true, scannedCount: 0 })
+    setState({ tree: new Map(), scanning: true, scannedCount: 0, error: null })
     window.electronAPI.removeScanListeners()
 
-    function flushBatch(finalScan: boolean) {
+    function flushBatch(finalScan: boolean, finalError: string | null = null) {
       batchTimer.current = null
       // Copy each directory's array so React sees new references and
       // useMemo in TreemapView recomputes the layout. Without this,
@@ -110,7 +112,8 @@ export function useTreeScanner(rootPath: string | null, scanTrigger: number, sca
       setState({
         tree: newTree,
         scanning: !finalScan,
-        scannedCount: pendingCount.current
+        scannedCount: pendingCount.current,
+        error: finalError,
       })
     }
 
@@ -135,11 +138,11 @@ export function useTreeScanner(rootPath: string | null, scanTrigger: number, sca
       scheduleBatch()
     })
 
-    window.electronAPI.onScanDone(() => {
+    window.electronAPI.onScanDone((error) => {
       if (batchTimer.current) {
         clearTimeout(batchTimer.current)
       }
-      flushBatch(true)
+      flushBatch(true, error ?? null)
     })
 
     window.electronAPI.startScan(

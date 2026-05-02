@@ -58,32 +58,43 @@ function spawnNativeScanner(
   onDone: (error?: string) => void,
   lowPriority = false
 ): () => void {
+  const scannerPath = getAppPlatform() === 'windows' ? dirPath.replace(/\//g, '\\') : dirPath
   // Wrap with `nice -n 10` in low-priority mode to reduce CPU/IO pressure
   const cmd = lowPriority ? 'nice' : binary
-  const args = lowPriority ? ['-n', '10', binary, dirPath] : [dirPath]
+  const args = lowPriority ? ['-n', '10', binary, scannerPath] : [scannerPath]
   const proc = spawn(cmd, args, {
-    stdio: ['ignore', 'pipe', 'ignore']
+    stdio: ['ignore', 'pipe', 'pipe']
   })
   let buffer = ''
+  let stderr = ''
   let cancelled = false
 
   proc.stdout.on('data', (chunk: Buffer) => {
     buffer += chunk.toString()
-    const lines = buffer.split('\n')
-    buffer = lines.pop() ?? ''
-    for (const line of lines) {
-      if (!line) continue
-      const entry = parseScannerLine(line, dirPath)
+      const lines = buffer.split('\n')
+      buffer = lines.pop() ?? ''
+      for (const line of lines) {
+        if (!line) continue
+      const entry = parseScannerLine(line, scannerPath)
       if (!cancelled && entry) onEntry(entry)
     }
   })
 
-  proc.on('close', () => {
+  proc.stderr.on('data', (chunk: Buffer) => {
+    stderr += chunk.toString()
+  })
+
+  proc.on('close', (code) => {
     if (buffer.trim()) {
-      const entry = parseScannerLine(buffer.trim(), dirPath)
+      const entry = parseScannerLine(buffer.trim(), scannerPath)
       if (!cancelled && entry) onEntry(entry)
     }
-    if (!cancelled) onDone()
+    if (cancelled) return
+    if (code && code !== 0) {
+      onDone(stderr.trim() || `Scanner exited with code ${code}`)
+      return
+    }
+    onDone()
   })
 
   proc.on('error', (err) => {

@@ -64,6 +64,24 @@ fn main() {
         }
     };
 
+    let metadata = match fs::symlink_metadata(&target) {
+        Ok(metadata) => metadata,
+        Err(err) => {
+            eprintln!("Could not access scan root {}: {}", target.display(), err);
+            std::process::exit(2);
+        }
+    };
+
+    if !metadata.is_dir() {
+        eprintln!("Scan root is not a directory: {}", target.display());
+        std::process::exit(2);
+    }
+
+    if let Err(err) = fs::read_dir(&target) {
+        eprintln!("Could not read scan root {}: {}", target.display(), err);
+        std::process::exit(2);
+    }
+
     let stdout = io::stdout();
     let mut writer = io::BufWriter::new(stdout.lock());
     let _ = walk_dir(&target, &target, &mut writer);
